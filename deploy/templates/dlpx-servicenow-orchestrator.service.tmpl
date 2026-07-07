@@ -1,0 +1,21 @@
+[Unit]
+Description=dlpx-servicenow-orchestrator - Delphix <-> ServiceNow incident-driven VDB orchestrator
+# Ordering only (After=), not Requires=: this project and
+# dlpx-mcp-remote-server are deployed/updated/uninstalled independently, so
+# a hard Requires= would mean stopping/restarting the MCP wrapper also stops
+# this orchestrator, which isn't desired.
+After=network.target dlpx-dct-mcp-proxy.service
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+Group={{SERVICE_USER}}
+WorkingDirectory={{SERVICE_HOME}}
+EnvironmentFile={{ETC_DIR}}/orchestrator.env
+ExecStart={{SERVICE_HOME}}/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8940
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

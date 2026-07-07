@@ -1,0 +1,34 @@
+# Copy this file to deploy/deploy.conf and fill in the values.
+# deploy/deploy.conf is gitignored (contains secrets) — never commit the real file.
+#
+# Normally you don't need to edit this file manually: running ./orchestrator.sh
+# and choosing "Install" for the first time, the menu asks for these values
+# interactively and creates deploy/deploy.conf for you.
+
+# SSH connection to the CentOS server (the same server where
+# dlpx-mcp-remote-server is already installed).
+SSH_HOST="my-server.example.com"
+SSH_USER="root"
+SSH_PORT="22"
+
+# This orchestrator has no Nginx vhost/TLS certificate of its own: on a
+# lab VM with no wildcard DNS there's no spare subdomain, so it instead adds
+# a `location /servicenow-webhook` route to dlpx-mcp-remote-server's
+# existing vhost (see docs/architecture.md). DOMAIN is simply that
+# project's own public hostname — usually the same as SSH_HOST.
+DOMAIN="my-server.example.com"
+
+# Anthropic API key used to extract the affected app + timestamp from the
+# incident text.
+ANTHROPIC_API_KEY="change-me"
+ANTHROPIC_MODEL="claude-haiku-4-5-20251001"
+
+# Local MCP endpoint of the already-installed dlpx-mcp-remote-server
+# (mcp-proxy in front of dxi-mcp-server), reached directly over loopback —
+# no OAuth hop needed since both projects run on the same host.
+MCP_LOCAL_URL="http://127.0.0.1:8930/sse"
+
+# ServiceNow PDI credentials (delphix.orchestrator service user, role itil).
+SERVICENOW_INSTANCE_URL="https://dev424996.service-now.com"
+SERVICENOW_USER="delphix.orchestrator"
+SERVICENOW_PASSWORD="change-me"
