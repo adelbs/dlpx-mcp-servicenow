@@ -1,4 +1,4 @@
-# dlpx-servicenow-orchestrator
+# dlpx-servicenow-mcp
 
 Incident-driven VDB orchestrator: when a ServiceNow analyst moves an Incident to **Prioritized**, this service
 reads the incident text, asks Claude to identify the affected application and the moment the problem occurred,
