@@ -1,6 +1,6 @@
 #!/bin/bash
-# Runs INSIDE the CentOS server (via ssh, as root/sudo), invoked by
-# ./orchestrator.sh ("Uninstall").
+# Runs INSIDE the server (CentOS/RHEL or Ubuntu/Debian, via ssh, as
+# root/sudo), invoked by ./orchestrator.sh ("Uninstall").
 #
 # Removes everything install_prereqs.sh/configure_and_start.sh created
 # specifically for this project: the systemd service, the application code,

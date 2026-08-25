@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs INSIDE the CentOS server (via ssh, as root/sudo) by
+# Runs INSIDE the server (CentOS/RHEL or Ubuntu/Debian, via ssh, as root/sudo) by
 # ./orchestrator.sh ("View status"). Read-only — changes nothing.
 set -uo pipefail
 
@@ -47,7 +47,8 @@ echo
 echo "=== LLM provider ==="
 if [ -r "$ETC_ENV" ]; then
     provider=$(grep -m1 '^LLM_PROVIDER=' "$ETC_ENV" | cut -d= -f2-)
-    echo "Configured: ${provider:-anthropic}"
+    provider="${provider:-ollama}"
+    echo "Configured: $provider"
     if [ "$provider" = "ollama" ]; then
         model=$(grep -m1 '^OLLAMA_MODEL=' "$ETC_ENV" | cut -d= -f2-)
         echo "Model: ${model:-unknown}"

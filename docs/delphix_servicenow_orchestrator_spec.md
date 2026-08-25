@@ -206,7 +206,8 @@ checks for these before installing, same idempotent approach as the reference pr
 ### 3.9 Installer
 
 Same pattern as `dlpx-mcp-remote-server`: a single entry-point shell script, run from a development machine (nothing
-to install locally beyond bash + ssh/scp), that connects via SSH to the CentOS server and does the install
+to install locally beyond bash + ssh/scp), that connects via SSH to the server (CentOS/RHEL or Ubuntu/Debian —
+see `deploy/remote/install_prereqs.sh`) and does the install
 end-to-end. **All menu text and prompts in English.**
 
 ```bash

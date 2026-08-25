@@ -1,5 +1,6 @@
 #!/bin/bash
-# Runs INSIDE the CentOS server (via ssh, as root/sudo), invoked by
+# Runs INSIDE the server (CentOS/RHEL or Ubuntu/Debian, via ssh, as
+# root/sudo), invoked by
 # configure_and_start.sh.
 #
 # This project owns its own Nginx vhost and Let's Encrypt certificate for

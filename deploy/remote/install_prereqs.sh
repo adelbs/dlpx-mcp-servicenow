@@ -1,6 +1,12 @@
 #!/bin/bash
-# Runs INSIDE the CentOS server (via ssh, as root/sudo), invoked by
+# Runs INSIDE the server (via ssh, as root/sudo), invoked by
 # ./orchestrator.sh ("Install"). Idempotent: safe to run again any time.
+#
+# Supports both RHEL-family (CentOS/RHEL/Fedora, yum/dnf) and Debian-family
+# (Debian/Ubuntu, apt) hosts — see OS_FAMILY detection below. Everything past
+# package installation (firewalld's own commands, systemd, useradd, uv,
+# Ollama's official installer) is identical on both, so only the package
+# list/manager differs.
 #
 # This project is fully self-contained: it installs and owns its own Nginx,
 # Certbot/TLS certificate, firewall rules and (optionally used) local Ollama
@@ -20,21 +26,69 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-PKG="yum"
-command -v dnf >/dev/null 2>&1 && PKG="dnf"
-
-log "Refreshing package cache ($PKG)..."
-$PKG makecache -y
-
-if ! rpm -q epel-release >/dev/null 2>&1; then
-    log "Installing epel-release (needed for certbot on CentOS/RHEL)..."
-    $PKG install -y epel-release
-else
-    log "epel-release already installed."
+OS_FAMILY=""
+if [ -f /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case " ${ID:-} ${ID_LIKE:-} " in
+        *" rhel "*|*" centos "*|*" fedora "*) OS_FAMILY="rhel" ;;
+        *" debian "*|*" ubuntu "*) OS_FAMILY="debian" ;;
+    esac
 fi
+if [ -z "$OS_FAMILY" ]; then
+    # Fallback for minimal images without a usable /etc/os-release.
+    if command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
+        OS_FAMILY="rhel"
+    elif command -v apt-get >/dev/null 2>&1; then
+        OS_FAMILY="debian"
+    fi
+fi
+if [ -z "$OS_FAMILY" ]; then
+    echo "Unsupported OS: could not detect a yum/dnf (RHEL-family) or apt (Debian-family) system." >&2
+    exit 1
+fi
+log "Detected OS family: $OS_FAMILY"
 
-log "Installing nginx, firewalld, certbot and supporting tools..."
-$PKG install -y nginx firewalld certbot python3-certbot-nginx policycoreutils-python-utils openssl
+case "$OS_FAMILY" in
+rhel)
+    PKG="yum"
+    command -v dnf >/dev/null 2>&1 && PKG="dnf"
+
+    log "Refreshing package cache ($PKG)..."
+    $PKG makecache -y
+
+    if ! rpm -q epel-release >/dev/null 2>&1; then
+        log "Installing epel-release (needed for certbot on CentOS/RHEL)..."
+        $PKG install -y epel-release
+    else
+        log "epel-release already installed."
+    fi
+
+    log "Installing nginx, firewalld, certbot and supporting tools..."
+    $PKG install -y nginx firewalld certbot python3-certbot-nginx policycoreutils-python-utils openssl
+    ;;
+debian)
+    log "Refreshing package cache (apt)..."
+    DEBIAN_FRONTEND=noninteractive apt-get update -y
+
+    # No epel-release/policycoreutils-python-utils equivalent needed here:
+    # these packages are already in Ubuntu/Debian's default repos, and
+    # SELinux (what policycoreutils manages) isn't the default MAC on
+    # Debian-family systems (AppArmor is, and needs no special handling for
+    # a plain nginx/systemd setup like this one).
+    log "Installing nginx, firewalld, certbot and supporting tools..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx firewalld certbot python3-certbot-nginx openssl
+    ;;
+esac
+
+# Ubuntu ships with ufw (usually inactive by default, but may have been
+# enabled manually). This project manages the firewall via firewalld on
+# every OS_FAMILY, to keep one set of commands — running both firewall
+# managers at once fights over the same netfilter rules.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+    log "ufw is active — disabling it in favor of firewalld (this project owns firewall config via firewalld on every supported OS)..."
+    ufw disable
+fi
 
 log "Enabling and starting firewalld, opening HTTP/HTTPS..."
 systemctl enable --now firewalld
@@ -81,8 +135,12 @@ systemctl enable --now ollama
 systemctl restart ollama
 
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
-    log "Creating service user '$SERVICE_USER'..."
-    useradd --system --create-home --home-dir "$SERVICE_HOME" --shell /sbin/nologin "$SERVICE_USER"
+    # `nologin` lives at /sbin/nologin on RHEL-family and /usr/sbin/nologin
+    # on Debian-family (some Ubuntu releases symlink /sbin -> /usr/sbin, but
+    # not all) — resolve it via PATH instead of hardcoding either.
+    nologin_shell="$(command -v nologin || echo /usr/sbin/nologin)"
+    log "Creating service user '$SERVICE_USER' (shell: $nologin_shell)..."
+    useradd --system --create-home --home-dir "$SERVICE_HOME" --shell "$nologin_shell" "$SERVICE_USER"
 else
     log "Service user '$SERVICE_USER' already exists."
 fi

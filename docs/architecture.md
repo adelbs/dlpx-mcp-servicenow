@@ -56,9 +56,10 @@ install/update — there's no independent git checkout living on the server. Thi
 ## Decision: own Nginx vhost and Let's Encrypt certificate
 
 This project installs and owns its own Nginx, firewalld rules and TLS certificate — `deploy/remote/install_prereqs.sh`
-installs `nginx`, `firewalld`, `epel-release`, `certbot` and `python3-certbot-nginx`, opens ports 80/443 in
-firewalld, and `deploy/remote/setup_nginx.sh` renders `deploy/templates/nginx-dlpx-servicenow-orchestrator.conf.tmpl`
-for `DOMAIN` and runs `certbot --nginx --non-interactive --agree-tos -m "$LETSENCRYPT_EMAIL" -d "$DOMAIN" --redirect`.
+installs `nginx`, `firewalld`, `certbot` and `python3-certbot-nginx` (plus `epel-release` on RHEL-family hosts,
+where certbot needs it — see the OS support decision below), opens ports 80/443 in firewalld, and
+`deploy/remote/setup_nginx.sh` renders `deploy/templates/nginx-dlpx-servicenow-orchestrator.conf.tmpl` for `DOMAIN`
+and runs `certbot --nginx --non-interactive --agree-tos -m "$LETSENCRYPT_EMAIL" -d "$DOMAIN" --redirect`.
 
 This requires `DOMAIN` to already have a DNS A/AAAA record pointing at the server, and ports 80/443 reachable from
 the internet for Certbot's HTTP-01 challenge (firewalld is opened by `install_prereqs.sh`; a cloud security group
@@ -68,6 +69,30 @@ in front of the host, if any, is outside this project's control and must allow t
 lets `certbot --nginx` reinsert the SSL block, reusing/renewing the certificate already under
 `/etc/letsencrypt/live/$DOMAIN` rather than issuing a new one every time. Re-running "Install" is safe at any
 point, including after a domain change.
+
+## Decision: support both CentOS/RHEL and Ubuntu/Debian
+
+The target host isn't guaranteed to be CentOS — it could just as well be Ubuntu. Everything past package
+installation is already identical on both (systemd units, `useradd`, `uv`'s and Ollama's own installers, `certbot`,
+`firewall-cmd`), so `deploy/remote/install_prereqs.sh` detects the OS family once (`/etc/os-release`'s `ID`/`ID_LIKE`,
+falling back to checking for `dnf`/`yum` vs `apt-get` if that file is missing/unhelpful) and only branches the
+package-manager step:
+
+- **RHEL-family** (CentOS/RHEL/Fedora): `yum`/`dnf`, plus `epel-release` (needed for `certbot` there) and
+  `policycoreutils-python-utils` (SELinux tooling — RHEL-family's default mandatory access control).
+- **Debian-family** (Debian/Ubuntu): `apt-get`. No EPEL equivalent needed (these packages are already in the
+  default repos), and no SELinux package either — Debian-family defaults to AppArmor, which needs no special
+  handling for a plain nginx/systemd setup like this one.
+
+**firewalld on both, not `ufw`**: Ubuntu ships `ufw`, not `firewalld`, but `firewalld` is available in Ubuntu's
+own repos too — installing it there keeps the *entire* firewall-handling code (opening 80/443, the install/status/
+uninstall scripts) identical across both OS families instead of maintaining two separate implementations. Since
+`ufw` might already be active on a fresh Ubuntu box (having two firewall managers fight over the same netfilter
+rules is a real source of confusing bugs), `install_prereqs.sh` disables it first if found active.
+
+**One other portability fix worth calling out**: the `nologin` shell for the `svcnow-orch` service user lives at
+`/sbin/nologin` on RHEL-family and `/usr/sbin/nologin` on Debian-family (not every Ubuntu release symlinks `/sbin`
+to `/usr/sbin`) — resolved via `command -v nologin` rather than hardcoding either path.
 
 ## Diagram
 
@@ -109,16 +134,18 @@ dxi-mcp-server ──▶ Delphix DCT ──▶ Delphix Engine
 systemd unit: `dlpx-servicenow-orchestrator` (uvicorn, port `127.0.0.1:8940`), running as the dedicated system
 user `svcnow-orch`.
 
-## Decision: `LLM_PROVIDER` — Anthropic by default, local Ollama as a no-cost option
+## Decision: `LLM_PROVIDER` — local Ollama by default, Anthropic as an opt-in
 
 `app/incident_agent.py` makes exactly one LLM call per incident: extract `app_name` + `problem_timestamp` from the
 incident text via forced tool-calling. Even at Anthropic's cheapest tier (`claude-haiku-4-5`, `max_tokens=300`,
-a short prompt) this is a real per-call cost, so `settings.llm_provider` (`"anthropic"` | `"ollama"`) lets it run
-against a fully local model instead — no external API call, no per-incident cost — while keeping Anthropic as the
-default and as a fallback if the local model isn't reliable enough. `extract_incident_context()` stays the single
-entry point `app/main.py` calls; it just dispatches to `_extract_via_anthropic()` (unchanged) or
-`_extract_via_ollama()` based on that setting. Both Anthropic and Ollama clients are constructed lazily (not at
-import time), so an Ollama-only deployment never needs `ANTHROPIC_API_KEY` set.
+a short prompt) this is a real per-call cost, so `settings.llm_provider` (`"anthropic"` | `"ollama"`, **default
+`"ollama"`**) runs it against a fully local model by default — no external API call, no per-incident cost.
+`LLM_PROVIDER=anthropic` remains available (and install_prereqs.sh/configure_and_start.sh support it end to end)
+for when the local model's extraction reliability isn't good enough for a given incident text style — see the
+trade-off note at the end of this section. `extract_incident_context()` stays the single entry point
+`app/main.py` calls; it just dispatches to `_extract_via_anthropic()` (unchanged) or `_extract_via_ollama()` based
+on that setting. Both Anthropic and Ollama clients are constructed lazily (not at import time), so the default
+Ollama-only deployment never needs `ANTHROPIC_API_KEY` set.
 
 **Ollama also speaks tool-calling**, in an OpenAI-style shape: `{"type": "function", "function": {"name", "description",
 "parameters"}}`, vs. Anthropic's `{"name", "description", "input_schema"}`. Since both use a plain JSON Schema
@@ -155,11 +182,12 @@ issues one sequential call per incident — no concurrency to gain from Ollama's
 on the next cold call).
 
 **Trade-off accepted knowingly**: a 3B model is meaningfully less reliable than Claude Haiku at following the
-tool-calling contract on free-form incident text. `_extract_via_ollama()` raises `IncidentAgentError` (same error
-surface `_extract_via_anthropic()` already has) when the model doesn't return a tool call — `main.py`'s existing
-top-level handler catches that and leaves a `work_notes` comment on the incident rather than failing silently, so
-a bad extraction is visible to the analyst either way. Before switching the default, compare extraction quality
-against both providers on real incident text (see the plan's verification steps).
+tool-calling contract on free-form incident text — this was accepted anyway in exchange for zero per-incident API
+cost by default. `_extract_via_ollama()` raises `IncidentAgentError` (same error surface `_extract_via_anthropic()`
+already has) when the model doesn't return a tool call — `main.py`'s existing top-level handler catches that and
+leaves a `work_notes` comment on the incident rather than failing silently, so a bad extraction is visible to the
+analyst either way. If extraction quality proves unreliable in practice for a given incident text style, set
+`LLM_PROVIDER=anthropic` and re-run "Install" rather than tuning the local model further.
 
 ## Decision: the orchestrator owns both ends of the incident lifecycle
 

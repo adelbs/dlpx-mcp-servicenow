@@ -1,7 +1,7 @@
 # dlpx-mcp-servicenow
 
 Incident-driven VDB orchestrator: when a ServiceNow analyst moves an Incident to **Prioritized**, this service
-reads the incident text, asks an LLM (Claude by default, or a local [Ollama](https://ollama.com) model — see
+reads the incident text, asks an LLM (a local [Ollama](https://ollama.com) model by default, or Claude — see
 `LLM_PROVIDER` below and [docs/architecture.md](docs/architecture.md)) to identify the affected application and
 the moment the problem occurred, and uses Delphix to provision a VDB from the closest snapshot — ready for
 investigation. Once the VDB is ready,
@@ -52,7 +52,7 @@ The first time you choose **1) Install**, the menu asks for the essentials (SSH 
 issue a certificate for, a Let's Encrypt email, which LLM provider to use, ServiceNow credentials, DCT
 credentials) and
 saves them to `deploy/deploy.conf` (gitignored) so it won't ask again. From there the script connects to the
-CentOS server via SSH and does everything else: installs Nginx/Certbot/firewalld and `uv`, uploads the application
+server (CentOS/RHEL or Ubuntu/Debian) via SSH and does everything else: installs Nginx/Certbot/firewalld and `uv`, uploads the application
 code (which pulls in `dxi-mcp-server` as a dependency), configures systemd, starts the service, and sets up this
 project's own Nginx vhost and TLS certificate for `DOMAIN`.
 

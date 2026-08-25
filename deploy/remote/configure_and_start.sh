@@ -1,5 +1,6 @@
 #!/bin/bash
-# Runs INSIDE the CentOS server (via ssh, as root/sudo), invoked by
+# Runs INSIDE the server (CentOS/RHEL or Ubuntu/Debian, via ssh, as
+# root/sudo), invoked by
 # ./orchestrator.sh ("Install"), right after install_prereqs.sh.
 #
 # Idempotent: safe to run again from scratch at any time.
@@ -44,7 +45,7 @@ source "$STAGING_DIR/deploy_vars.env"
 : "${SERVICENOW_USER:?SERVICENOW_USER not set in deploy_vars.env}"
 : "${SERVICENOW_PASSWORD:?SERVICENOW_PASSWORD not set in deploy_vars.env}"
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}"
-LLM_PROVIDER="${LLM_PROVIDER:-anthropic}"
+LLM_PROVIDER="${LLM_PROVIDER:-ollama}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
 OLLAMA_BASE_URL="http://127.0.0.1:11434"
 if [ "$LLM_PROVIDER" = "anthropic" ]; then

@@ -5,7 +5,8 @@
 # and choosing "Install" for the first time, the menu asks for these values
 # interactively and creates deploy/deploy.conf for you.
 
-# SSH connection to the CentOS server this orchestrator will be installed on.
+# SSH connection to the server this orchestrator will be installed on
+# (CentOS/RHEL or Ubuntu/Debian — see deploy/remote/install_prereqs.sh).
 SSH_HOST="my-server.example.com"
 SSH_USER="root"
 SSH_PORT="22"
@@ -19,11 +20,12 @@ DOMAIN="my-server.example.com"
 LETSENCRYPT_EMAIL="you@example.com"
 
 # Which backend extracts the affected app + timestamp from the incident
-# text: "anthropic" (Claude API, small per-call cost) or "ollama" (runs
-# fully locally on this same server via install_prereqs.sh's Ollama install
-# — no per-call cost, needs enough free RAM for the chosen model; see
-# docs/architecture.md for model/hardware sizing guidance).
-LLM_PROVIDER="anthropic"
+# text. Default is "ollama" — runs fully locally on this same server via
+# install_prereqs.sh's Ollama install, no per-call cost (needs enough free
+# RAM for the chosen model; see docs/architecture.md for sizing guidance).
+# Set to "anthropic" to use the Claude API instead (small per-call cost,
+# more reliable extraction).
+LLM_PROVIDER="ollama"
 
 # Only used when LLM_PROVIDER="anthropic".
 ANTHROPIC_API_KEY="change-me"

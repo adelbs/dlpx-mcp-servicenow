@@ -26,10 +26,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Which backend app/incident_agent.py uses to extract app_name +
-    # problem_timestamp from incident text. "ollama" runs fully locally (see
-    # docs/architecture.md for model/hardware sizing) — no per-call API cost,
-    # at the trade-off of a much smaller model's extraction reliability.
-    llm_provider: Literal["anthropic", "ollama"] = "anthropic"
+    # problem_timestamp from incident text. Defaults to "ollama" — runs
+    # fully locally (see docs/architecture.md for model/hardware sizing), no
+    # per-call API cost — at the trade-off of a much smaller model's
+    # extraction reliability vs "anthropic".
+    llm_provider: Literal["anthropic", "ollama"] = "ollama"
 
     # Required only when llm_provider="anthropic" (validated lazily in
     # app/incident_agent.py, not here, so an Ollama-only deployment doesn't

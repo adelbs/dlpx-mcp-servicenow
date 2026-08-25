@@ -39,13 +39,11 @@ async def test_extract_via_ollama_raises_when_model_skips_the_tool_call():
 
 
 @pytest.mark.asyncio
-async def test_extract_incident_context_dispatches_to_ollama_when_configured():
+async def test_extract_incident_context_dispatches_to_ollama_by_default():
+    assert settings.llm_provider == "ollama"
     fake_extract = AsyncMock(return_value={"app_name": "CRM", "problem_timestamp": "2026-07-06 10:30:00"})
 
-    with (
-        patch.object(settings, "llm_provider", "ollama"),
-        patch.object(incident_agent, "_extract_via_ollama", new=fake_extract),
-    ):
+    with patch.object(incident_agent, "_extract_via_ollama", new=fake_extract):
         result = await incident_agent.extract_incident_context("short desc", "desc", "2026-07-06 10:00:00")
 
     assert result == {"app_name": "CRM", "problem_timestamp": "2026-07-06 10:30:00"}
@@ -53,11 +51,13 @@ async def test_extract_incident_context_dispatches_to_ollama_when_configured():
 
 
 @pytest.mark.asyncio
-async def test_extract_incident_context_dispatches_to_anthropic_by_default():
-    assert settings.llm_provider == "anthropic"
+async def test_extract_incident_context_dispatches_to_anthropic_when_configured():
     fake_extract = AsyncMock(return_value={"app_name": "CRM", "problem_timestamp": "2026-07-06 10:30:00"})
 
-    with patch.object(incident_agent, "_extract_via_anthropic", new=fake_extract):
+    with (
+        patch.object(settings, "llm_provider", "anthropic"),
+        patch.object(incident_agent, "_extract_via_anthropic", new=fake_extract),
+    ):
         result = await incident_agent.extract_incident_context("short desc", "desc", "2026-07-06 10:00:00")
 
     assert result == {"app_name": "CRM", "problem_timestamp": "2026-07-06 10:30:00"}
