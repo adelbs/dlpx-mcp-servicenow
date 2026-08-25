@@ -1,15 +1,30 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from . import delphix_client, incident_agent, servicenow_client
+from . import delphix_client, incident_agent, mcp_client, servicenow_client
 from .config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestrator")
 
-app = FastAPI(title="Delphix <-> ServiceNow Orchestrator")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Fail fast at boot if dct-mcp-server can't be spawned or DCT_API_KEY/
+    # DCT_BASE_URL are wrong, rather than only discovering it on the first
+    # incident webhook — see app/mcp_client.py for why this is a single
+    # long-lived subprocess/session instead of one per call.
+    await mcp_client.start()
+    try:
+        yield
+    finally:
+        await mcp_client.stop()
+
+
+app = FastAPI(title="Delphix <-> ServiceNow Orchestrator", lifespan=lifespan)
 
 _MAX_ERROR_LENGTH = 500
 

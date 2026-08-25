@@ -2,11 +2,12 @@
 # Runs INSIDE the CentOS server (via ssh, as root/sudo), invoked by
 # ./orchestrator.sh ("Install"). Idempotent: safe to run again any time.
 #
-# This project deliberately does NOT install nginx/certbot/firewalld/EPEL:
-# they're already present and managed by dlpx-mcp-remote-server, which is
-# expected to already be installed on this same host, and this project only
-# ever reads/patches its existing Nginx vhost (see patch_shared_nginx.sh) —
-# it never issues its own certificate or opens its own firewall rule.
+# This project is fully self-contained: it installs and owns its own Nginx,
+# Certbot/TLS certificate and firewall rules (no dependency on
+# dlpx-mcp-remote-server or any other project being present on the host —
+# see docs/architecture.md). dxi-mcp-server itself isn't installed here: it's
+# a project dependency in pyproject.toml, installed into the venv by `uv
+# sync` in configure_and_start.sh.
 set -euo pipefail
 
 SERVICE_USER="svcnow-orch"
@@ -19,11 +20,30 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-if ! command -v nginx >/dev/null 2>&1; then
-    echo "nginx not found — this project expects dlpx-mcp-remote-server to already be" >&2
-    echo "installed on this host (it owns the shared Nginx vhost this project patches)." >&2
-    exit 1
+PKG="yum"
+command -v dnf >/dev/null 2>&1 && PKG="dnf"
+
+log "Refreshing package cache ($PKG)..."
+$PKG makecache -y
+
+if ! rpm -q epel-release >/dev/null 2>&1; then
+    log "Installing epel-release (needed for certbot on CentOS/RHEL)..."
+    $PKG install -y epel-release
+else
+    log "epel-release already installed."
 fi
+
+log "Installing nginx, firewalld, certbot and supporting tools..."
+$PKG install -y nginx firewalld certbot python3-certbot-nginx policycoreutils-python-utils openssl
+
+log "Enabling and starting firewalld, opening HTTP/HTTPS..."
+systemctl enable --now firewalld
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --reload
+
+log "Enabling and starting nginx..."
+systemctl enable --now nginx
 
 if ! command -v uv >/dev/null 2>&1; then
     log "Installing uv (manages its own Python 3.11+ and virtualenvs)..."

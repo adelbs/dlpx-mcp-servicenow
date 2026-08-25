@@ -1,7 +1,7 @@
 """
 Delphix access, via the DCT REST API dispatched through dxi-mcp-server's
-generic `discovery`/`execute` tools (see app/mcp_client.py), reached over the
-local dlpx-mcp-remote-server mcp-proxy (see docs/architecture.md).
+generic `discovery`/`execute` tools (see app/mcp_client.py), spawned directly
+as a stdio subprocess of this app (see docs/architecture.md).
 
 dxi-mcp-server (the official Delphix DCT MCP server) does NOT expose
 per-resource tools like "data_tool"/"job_tool" — earlier drafts of this
@@ -10,7 +10,7 @@ design, which turned out to be wrong. The real surface is exactly two tools:
 `discovery` (browse the cached OpenAPI spec) and `execute` (dispatch one DCT
 API call: path + method + path_params/query_params/body). Every path,
 operationId and field name below was confirmed live against the DCT REST API
-behind the mcp-proxy on the demo VM (via `discovery`'s get_operation_schema,
+behind dxi-mcp-server on the demo VM (via `discovery`'s get_operation_schema,
 plus real GET calls against the demo dSources/VDBs), not just assumed.
 
 Neither /dsources (list) nor /vdbs (list) support a server-side filter/tag

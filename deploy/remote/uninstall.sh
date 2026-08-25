@@ -4,19 +4,20 @@
 #
 # Removes everything install_prereqs.sh/configure_and_start.sh created
 # specifically for this project: the systemd service, the application code,
-# the environment file (secrets), the service user, and the
-# /servicenow-webhook location block it added to dlpx-mcp-remote-server's
-# shared Nginx vhost.
+# the environment file (secrets), the service user, and this project's own
+# Nginx vhost.
 #
-# Does NOT remove generic system packages (nginx, uv) or touch anything
-# else in dlpx-mcp-remote-server's own vhost, service, code, or user.
-# Idempotent: safe to run even if some of this is already gone.
+# Does NOT remove generic system packages (nginx, certbot, firewalld, uv) or
+# the issued TLS certificate under /etc/letsencrypt — those may be reused by
+# a future reinstall, and removing a Let's Encrypt certificate is easy to
+# get wrong (rate limits on reissuing). Idempotent: safe to run even if some
+# of this is already gone.
 set -uo pipefail
 
 SERVICE_USER="svcnow-orch"
 SERVICE_HOME="/opt/dlpx-servicenow-orchestrator"
 ETC_DIR="/etc/dlpx-servicenow-orchestrator"
-MCP_CONF="/etc/nginx/conf.d/dlpx-mcp.conf"
+VHOST_CONF="/etc/nginx/conf.d/dlpx-servicenow-orchestrator.conf"
 
 log() { echo "[uninstall] $*"; }
 
@@ -32,13 +33,13 @@ log "Removing the systemd unit..."
 rm -f /etc/systemd/system/dlpx-servicenow-orchestrator.service
 systemctl daemon-reload
 
-log "Removing the /servicenow-webhook route from the shared Nginx vhost..."
-if [ -f "$MCP_CONF" ] && grep -q "# BEGIN dlpx-servicenow-orchestrator" "$MCP_CONF"; then
-    sed -i "/# BEGIN dlpx-servicenow-orchestrator/,/# END dlpx-servicenow-orchestrator/d" "$MCP_CONF"
+log "Removing this project's Nginx vhost..."
+if [ -f "$VHOST_CONF" ]; then
+    rm -f "$VHOST_CONF"
     if nginx -t >/dev/null 2>&1; then
         systemctl reload nginx >/dev/null 2>&1 || true
     else
-        log "WARNING: 'nginx -t' failed after removing the route — check $MCP_CONF manually."
+        log "WARNING: 'nginx -t' failed after removing $VHOST_CONF — check the Nginx config manually."
     fi
 fi
 
@@ -51,4 +52,4 @@ if id -u "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 
 log "Uninstall complete."
-echo "nginx, uv, and dlpx-mcp-remote-server (including its own vhost/certificate) were NOT touched."
+echo "nginx, certbot, firewalld, uv, and the TLS certificate under /etc/letsencrypt were NOT touched."

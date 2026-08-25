@@ -5,28 +5,30 @@
 # and choosing "Install" for the first time, the menu asks for these values
 # interactively and creates deploy/deploy.conf for you.
 
-# SSH connection to the CentOS server (the same server where
-# dlpx-mcp-remote-server is already installed).
+# SSH connection to the CentOS server this orchestrator will be installed on.
 SSH_HOST="my-server.example.com"
 SSH_USER="root"
 SSH_PORT="22"
 
-# This orchestrator has no Nginx vhost/TLS certificate of its own: on a
-# lab VM with no wildcard DNS there's no spare subdomain, so it instead adds
-# a `location /servicenow-webhook` route to dlpx-mcp-remote-server's
-# existing vhost (see docs/architecture.md). DOMAIN is simply that
-# project's own public hostname — usually the same as SSH_HOST.
+# This orchestrator owns its own Nginx vhost and Let's Encrypt certificate
+# (see docs/architecture.md). DOMAIN must already have a DNS A/AAAA record
+# pointing at SSH_HOST, and ports 80/443 must be reachable from the internet
+# (install_prereqs.sh opens them in firewalld; a cloud security group in
+# front of this host, if any, is separate and must allow them too).
 DOMAIN="my-server.example.com"
+LETSENCRYPT_EMAIL="you@example.com"
 
 # Anthropic API key used to extract the affected app + timestamp from the
 # incident text.
 ANTHROPIC_API_KEY="change-me"
 ANTHROPIC_MODEL="claude-haiku-4-5-20251001"
 
-# Local MCP endpoint of the already-installed dlpx-mcp-remote-server
-# (mcp-proxy in front of dxi-mcp-server), reached directly over loopback —
-# no OAuth hop needed since both projects run on the same host.
-MCP_LOCAL_URL="http://127.0.0.1:8930/sse"
+# Delphix DCT credentials. dxi-mcp-server (https://github.com/delphix/dxi-mcp-server,
+# installed as a project dependency and spawned directly as a stdio
+# subprocess by app/mcp_client.py) uses these to call the DCT REST API on
+# this orchestrator's behalf.
+DCT_BASE_URL="https://my-dct-instance.example.com"
+DCT_API_KEY="change-me"
 
 # ServiceNow PDI credentials (delphix.orchestrator service user, role itil).
 SERVICENOW_INSTANCE_URL="https://dev424996.service-now.com"

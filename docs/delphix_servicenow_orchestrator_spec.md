@@ -1,8 +1,15 @@
 # Technical Specification — Delphix ↔ ServiceNow Orchestrator
 
-Handoff document for implementation via Claude Code, running on the VM where the Delphix Engine/DCT and the
-[`dlpx-mcp-remote-server`](https://github.com/adelbs/dlpx-mcp-remote-server) MCP wrapper are already active. Covers
-what's already configured in ServiceNow, what still needs to be built, and the architecture decisions already made.
+Handoff document for implementation via Claude Code, running on the VM where the Delphix Engine/DCT is already
+active. Covers what's already configured in ServiceNow, what still needs to be built, and the architecture
+decisions already made.
+
+**Note (post-implementation update)**: this project originally ran alongside a separate, already-installed MCP
+wrapper (`dlpx-mcp-remote-server`) and talked to its local `mcp-proxy`, and piggybacked on its Nginx vhost. It has
+since been made fully self-contained — it spawns `dxi-mcp-server` directly as its own subprocess and owns its own
+Nginx vhost/Let's Encrypt certificate — see [architecture.md](architecture.md) for the current design and why. §3.5
+through §3.8 below describe the original (superseded) design and are kept for history; treat
+[architecture.md](architecture.md) as the source of truth for the current architecture.
 
 ## 1. Objective
 
@@ -54,9 +61,9 @@ On teardown, `action` is `"teardown"`.
 
 ### 3.1 Suggested stack
 
-Python + FastAPI. Runs as a single process, on the same VM as the Delphix Engine/DCT and the
-`dlpx-mcp-remote-server` MCP wrapper. Rationale: I/O-bound (webhook → Claude → Delphix → ServiceNow), lightweight,
-easy to test with `curl`/`httpx`, easy to run as a systemd service alongside the existing MCP wrapper.
+Python + FastAPI. Runs as a single process, spawning `dxi-mcp-server` as its own subprocess (see
+[architecture.md](architecture.md)). Rationale: I/O-bound (webhook → Claude → Delphix → ServiceNow), lightweight,
+easy to test with `curl`/`httpx`, easy to run as a systemd service.
 
 ### 3.2 Single endpoint
 
@@ -143,9 +150,12 @@ path.
 
 ### 3.6 Configuration / environment variables
 
+Current (see [architecture.md](architecture.md)):
+
 ```
 ANTHROPIC_API_KEY=
-MCP_LOCAL_URL=http://127.0.0.1:8930   # dlpx-mcp-remote-server's local mcp-proxy (no auth needed, loopback only)
+DCT_BASE_URL=https://<dct-instance>          # dxi-mcp-server, spawned directly by this app, uses these to call DCT
+DCT_API_KEY=
 SERVICENOW_INSTANCE_URL=https://dev424996.service-now.com
 SERVICENOW_USER=delphix.orchestrator
 SERVICENOW_PASSWORD=
@@ -232,15 +242,16 @@ dlpx-servicenow-orchestrator/
 │   ├── servicenow_client.py     # PATCH work_notes + state via Table API
 │   ├── delphix_client.py        # find_dsource_by_tag, provision_vdb, poll_job,
 │   │                            # get_vdb_connection_info, tag_vdb, find_vdb_by_tag, delete_vdb
-│   │                            # (MCP client talking to 127.0.0.1:8930)
+│   ├── mcp_client.py            # spawns dxi-mcp-server directly (stdio), owns the long-lived MCP session
 │   └── incident_agent.py        # Claude API call to extract app + timestamp
 ├── deploy/
 │   ├── deploy.conf.example
 │   ├── lib/                     # common.sh, ssh.sh, action_install.sh, action_status.sh,
 │   │                            # action_start_stop.sh, action_update.sh, action_uninstall.sh
-│   ├── remote/                  # install_prereqs.sh, configure_and_start.sh, patch_shared_nginx.sh,
+│   ├── remote/                  # install_prereqs.sh, configure_and_start.sh, setup_nginx.sh,
 │   │                            # check_status.sh, uninstall.sh
-│   └── templates/                # dlpx-servicenow-orchestrator.service.tmpl
+│   └── templates/                # dlpx-servicenow-orchestrator.service.tmpl,
+│                                  # nginx-dlpx-servicenow-orchestrator.conf.tmpl
 ├── docs/
 │   ├── architecture.md
 │   ├── delphix_servicenow_orchestrator_spec.md   # this document
@@ -253,9 +264,9 @@ dlpx-servicenow-orchestrator/
 ### 3.11 How to test
 
 1. Run FastAPI locally and test both flows with `curl` using the sample payloads, before exposing publicly.
-2. Run the installer's **1) Install**, confirm the shared Nginx vhost now routes `/servicenow-webhook` to this app
-   (`check_status.sh` verifies the marker block is present), and update the
-   `delphix.orchestrator_webhook_url` system property in ServiceNow with `https://<shared-hostname>/servicenow-webhook`.
+2. Run the installer's **1) Install**, confirm this project's own Nginx vhost/certificate is up
+   (`check_status.sh` reports it), and update the `delphix.orchestrator_webhook_url` system property in
+   ServiceNow with `https://<DOMAIN>/servicenow-webhook`.
 3. Real end-to-end test: move a test incident (with a `short_description` mentioning a known app, e.g. "CRM issue")
    from New → Prioritized, check the filled-in `work_notes`, the created VDB in Delphix, and that the incident moved
    itself to In Progress; then move it to Resolved and confirm the VDB is destroyed and the incident moves itself to
@@ -272,9 +283,9 @@ dlpx-servicenow-orchestrator/
 - ~~Decide whether `work_notes` should include the full connection string~~ — resolved: it includes the VDB's
   `jdbc_connection_string` (returned directly by DCT), the source dSource name, the snapshot timestamp, and the
   database type/name — confirmed live on a real MSSQL VDB.
-- ~~Pick the actual subdomain to request/register for the orchestrator's public endpoint~~ — resolved: no spare
-  subdomain exists on the lab VM (no wildcard DNS), so the orchestrator reuses `dlpx-mcp-remote-server`'s hostname
-  via a path-based Nginx route instead (§3.7).
+- ~~Pick the actual subdomain to request/register for the orchestrator's public endpoint~~ — resolved: the
+  orchestrator now owns its own Nginx vhost and Let's Encrypt certificate for `DOMAIN` (see
+  [architecture.md](architecture.md)), superseding the path-based shared-vhost approach described in §3.7.
 - **Known, accepted limitation**: one incident maps to exactly one VDB (`VDB_<number>`, tagged
   `incident:<number>`). If the incident text mentions more than one application (e.g. "ERP and CRM both down"),
   Claude may return a combined `app_name` that matches no dSource tag, and the flow fails with a clear

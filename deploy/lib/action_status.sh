@@ -10,7 +10,7 @@ action_status() {
 
     if command -v curl >/dev/null 2>&1 && [ -n "${DOMAIN:-}" ]; then
         echo
-        log_info "Checking public accessibility (HTTPS, shared dlpx-mcp-remote-server vhost)..."
+        log_info "Checking public accessibility (HTTPS)..."
         # /servicenow-webhook only accepts POST, so a GET is expected to
         # reach the app and come back with 405 — that's success here (it
         # proves Nginx routes to this app), not an error. Anything else

@@ -36,9 +36,11 @@ action_install() {
     # `set -u`, aborting with "unbound variable").
     {
         printf 'DOMAIN=%q\n' "$DOMAIN"
+        printf 'LETSENCRYPT_EMAIL=%q\n' "$LETSENCRYPT_EMAIL"
         printf 'ANTHROPIC_API_KEY=%q\n' "$ANTHROPIC_API_KEY"
         printf 'ANTHROPIC_MODEL=%q\n' "$ANTHROPIC_MODEL"
-        printf 'MCP_LOCAL_URL=%q\n' "$MCP_LOCAL_URL"
+        printf 'DCT_BASE_URL=%q\n' "$DCT_BASE_URL"
+        printf 'DCT_API_KEY=%q\n' "$DCT_API_KEY"
         printf 'SERVICENOW_INSTANCE_URL=%q\n' "$SERVICENOW_INSTANCE_URL"
         printf 'SERVICENOW_USER=%q\n' "$SERVICENOW_USER"
         printf 'SERVICENOW_PASSWORD=%q\n' "$SERVICENOW_PASSWORD"

@@ -46,17 +46,19 @@ ensure_conf() {
     fi
 
     log_warn "deploy/deploy.conf not found — let's create it now (only asked once)."
-    local ssh_host ssh_user ssh_port domain
-    local anthropic_api_key anthropic_model mcp_local_url
+    local ssh_host ssh_user ssh_port domain letsencrypt_email
+    local anthropic_api_key anthropic_model dct_base_url dct_api_key
     local servicenow_instance_url servicenow_user servicenow_password
 
-    ssh_host=$(prompt_default "CentOS server host/IP (same server as dlpx-mcp-remote-server)" "")
+    ssh_host=$(prompt_default "CentOS server host/IP" "")
     ssh_user=$(prompt_default "SSH user" "root")
     ssh_port=$(prompt_default "SSH port" "22")
-    domain=$(prompt_default "Existing public hostname of dlpx-mcp-remote-server's Nginx vhost (this orchestrator has no vhost/domain of its own — see docs/architecture.md)" "$ssh_host")
+    domain=$(prompt_default "Public hostname for this orchestrator's own Nginx vhost/TLS certificate (must already have a DNS A/AAAA record pointing at this server)" "$ssh_host")
+    letsencrypt_email=$(prompt_default "Email for Let's Encrypt (certificate expiry notices)" "")
     anthropic_api_key=$(prompt_secret "ANTHROPIC_API_KEY")
     anthropic_model=$(prompt_default "ANTHROPIC_MODEL" "claude-haiku-4-5-20251001")
-    mcp_local_url=$(prompt_default "MCP_LOCAL_URL (local mcp-proxy from dlpx-mcp-remote-server)" "http://127.0.0.1:8930/sse")
+    dct_base_url=$(prompt_default "DCT_BASE_URL (Delphix DCT instance URL, no trailing /dct)" "")
+    dct_api_key=$(prompt_secret "DCT_API_KEY (same credential dxi-mcp-server uses to call DCT)")
     servicenow_instance_url=$(prompt_default "SERVICENOW_INSTANCE_URL" "")
     servicenow_user=$(prompt_default "SERVICENOW_USER" "delphix.orchestrator")
     servicenow_password=$(prompt_secret "SERVICENOW_PASSWORD")
@@ -66,9 +68,11 @@ SSH_HOST="$ssh_host"
 SSH_USER="$ssh_user"
 SSH_PORT="$ssh_port"
 DOMAIN="$domain"
+LETSENCRYPT_EMAIL="$letsencrypt_email"
 ANTHROPIC_API_KEY="$anthropic_api_key"
 ANTHROPIC_MODEL="$anthropic_model"
-MCP_LOCAL_URL="$mcp_local_url"
+DCT_BASE_URL="$dct_base_url"
+DCT_API_KEY="$dct_api_key"
 SERVICENOW_INSTANCE_URL="$servicenow_instance_url"
 SERVICENOW_USER="$servicenow_user"
 SERVICENOW_PASSWORD="$servicenow_password"

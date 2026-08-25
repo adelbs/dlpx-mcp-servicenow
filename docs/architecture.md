@@ -4,51 +4,70 @@
 
 ServiceNow needs a public HTTPS endpoint to notify this orchestrator of Incident state changes (via
 `RESTMessageV2` Business Rules — see [servicenow_runbook_rebuild_from_scratch.md](servicenow_runbook_rebuild_from_scratch.md)).
-Once notified, the orchestrator needs to read the incident
-text, decide which Delphix dataset/timestamp it refers to, provision or destroy a VDB accordingly, and let
-ServiceNow know via the Table API. It shares its host with `dlpx-mcp-remote-server`, an already-running MCP
-wrapper around Delphix's own `dxi-mcp-server`.
+Once notified, the orchestrator needs to read the incident text, decide which Delphix dataset/timestamp it refers
+to, provision or destroy a VDB accordingly, and let ServiceNow know via the Table API. It talks to Delphix through
+Delphix's own [`dxi-mcp-server`](https://github.com/delphix/dxi-mcp-server), and needs a public HTTPS endpoint of
+its own for ServiceNow to reach.
 
-## Decision: talk to Delphix through the local mcp-proxy, not the public OAuth gateway
+## Decision: spawn dxi-mcp-server directly, as our own subprocess
 
-`dlpx-mcp-remote-server` already exposes `dxi-mcp-server`'s tools in two ways: a public, OAuth-protected endpoint
-(`dlpx-mcp-gateway`, for remote clients like Claude Web) and a private one, `mcp-proxy`, listening on
-`127.0.0.1:8930` with no authentication of its own (loopback only). Since this orchestrator runs on the very same
-host, it connects directly to the private one — no OAuth token to manage, no dependency on the gateway's public
-domain/certificate being healthy, only on the `dlpx-dct-mcp-proxy` systemd unit being up.
+An earlier version of this project ran alongside a separate, already-installed MCP wrapper
+(`dlpx-mcp-remote-server`) on the same host and talked to its local `mcp-proxy` over SSE. That made this project
+depend on another project's install succeeding first — in practice a real source of install-order failures (a
+broken prerequisite on the *other* project silently left its service user uncreated, which cascaded into this
+project's own install failing too, with no dependency the tooling could check for automatically).
 
-## Decision: don't hard-couple systemd units across projects
+This project now installs `dxi-mcp-server` as a normal project dependency (`pyproject.toml`, a `uv`/pip git
+dependency — see "Decision: pin dxi-mcp-server via uv, not a server-side git clone" below) and
+`app/mcp_client.py` spawns it directly as a stdio subprocess — the same way `dlpx-mcp-remote-server`'s own
+`mcp-proxy` did internally, just without the extra project and extra hop. `dxi-mcp-server` only speaks stdio (no
+built-in HTTP/SSE mode), which is exactly what `mcp.client.stdio.stdio_client` is for.
 
-The orchestrator's systemd unit declares `After=dlpx-dct-mcp-proxy.service` (ordering only), not `Requires=`. The
-two projects are deployed, updated and uninstalled independently; a hard `Requires=` would mean
-restarting/stopping `dlpx-mcp-remote-server` also stops this orchestrator, which isn't desired.
+**One long-lived subprocess, not one per call.** `app/delphix_client.py`'s `poll_job()` calls the MCP session
+every few seconds for up to `job_poll_timeout_seconds` (900s default) while waiting on a provision/delete job —
+spawning a fresh `dxi-mcp-server` per call (each one reloads/caches the DCT OpenAPI spec on its own startup) would
+mean dozens of process spawns per incident. Instead, `app/main.py`'s `lifespan` calls `mcp_client.start()` once at
+boot (spawn + MCP handshake) and `mcp_client.stop()` at shutdown; `call_tool()` reuses that one session for every
+tool call, guarded by an `asyncio.Lock` to serialize access to the single stdio pipe (this app's actual traffic is
+low-volume and sequential per incident, so a lock is a simple way to sidestep any doubt about concurrent-call
+safety, not something observed to be needed). A side benefit: since `DCT_API_KEY`/`DCT_BASE_URL` are validated at
+`dxi-mcp-server`'s own startup, a bad credential now fails the whole app at boot instead of surfacing only on the
+first incident webhook.
+
+## Decision: pin dxi-mcp-server via uv, not a server-side git clone
+
+`dxi-mcp-server`'s own `pyproject.toml` declares the console script `dct-mcp-server` (package name
+`dct-mcp-server`). `pyproject.toml` here depends on it as a direct git reference
+(`dct-mcp-server @ git+https://github.com/delphix/dxi-mcp-server.git`), which needs
+`tool.hatch.metadata.allow-direct-references = true` since it isn't published to PyPI. `uv sync` (already run on
+every install/update — see below) resolves and installs it into `.venv` like any other dependency, and
+`uv.lock` pins the exact resolved commit — so, unlike a `git pull --ff-only` vendor checkout that always tracks
+whatever is newest upstream, installs stay reproducible until this repo's `pyproject.toml`/`uv.lock` are
+deliberately updated. `app/config.py`'s `_default_dct_mcp_command()` locates the installed console script via
+`sys.executable`'s sibling directory rather than `$PATH`, since the systemd unit invokes uvicorn by absolute path
+and never "activates" the virtualenv.
 
 ## Decision: no server-side git clone for this project's own code
 
-Unlike `dxi-mcp-server` (an external upstream project, git-cloned untouched on the server), this project's own
-application code is **uploaded via `scp`** from the developer's working tree on every install/update — there's no
-independent git checkout living on the server. This keeps "update" simple (re-upload + `uv sync` + restart) and
-matches how `dlpx-mcp-remote-server` itself treats its own custom `gateway/` code.
+This project's own application code is **uploaded via `scp`** from the developer's working tree on every
+install/update — there's no independent git checkout living on the server. This keeps "update" simple (re-upload +
+`uv sync` + restart).
 
-## Decision: no Nginx vhost/certificate of our own — patch the shared one instead
+## Decision: own Nginx vhost and Let's Encrypt certificate
 
-The original plan was for this project to get its own subdomain, Nginx vhost and Let's Encrypt certificate, same
-as `dlpx-mcp-remote-server` does for its gateway. On the actual lab VM this turned out not to be possible: its
-public hostname (`<something>.vm.cld.sr`) has **no wildcard DNS**, so there's no spare subdomain to point at this
-server, and `dlpx-mcp-remote-server`'s vhost (`/etc/nginx/conf.d/dlpx-mcp.conf`) already claims the entire
-hostname with its own certificate.
+This project installs and owns its own Nginx, firewalld rules and TLS certificate — `deploy/remote/install_prereqs.sh`
+installs `nginx`, `firewalld`, `epel-release`, `certbot` and `python3-certbot-nginx`, opens ports 80/443 in
+firewalld, and `deploy/remote/setup_nginx.sh` renders `deploy/templates/nginx-dlpx-servicenow-orchestrator.conf.tmpl`
+for `DOMAIN` and runs `certbot --nginx --non-interactive --agree-tos -m "$LETSENCRYPT_EMAIL" -d "$DOMAIN" --redirect`.
 
-Instead, `deploy/remote/patch_shared_nginx.sh` idempotently inserts a `location /servicenow-webhook` block
-directly into that existing file (anchored right after Certbot's `ssl_dhparam` line, which is always the last
-directive Certbot appends), proxying to this app on `127.0.0.1:8940`. It removes and reinserts its own
-marker-delimited block on every run, so re-running it is a no-op change.
+This requires `DOMAIN` to already have a DNS A/AAAA record pointing at the server, and ports 80/443 reachable from
+the internet for Certbot's HTTP-01 challenge (firewalld is opened by `install_prereqs.sh`; a cloud security group
+in front of the host, if any, is outside this project's control and must allow them too).
 
-**Trade-off accepted knowingly**: `dlpx-mcp-remote-server`'s own installer rewrites `dlpx-mcp.conf` from scratch on
-every install (that's what makes *its* install idempotent across domain changes) — which wipes the block this
-project adds. If `dlpx-mcp-remote-server` is ever reinstalled/updated on this host, re-run this orchestrator's
-"Install" option (`./orchestrator.sh 1`) to reapply the route; `check_status.sh` also flags when the block is
-missing. This project never touches Certbot, firewalld, or EPEL — those stay entirely owned by
-`dlpx-mcp-remote-server`.
+**Idempotency pattern**: `setup_nginx.sh` re-renders the plain-HTTP vhost template from scratch on every run, then
+lets `certbot --nginx` reinsert the SSL block, reusing/renewing the certificate already under
+`/etc/letsencrypt/live/$DOMAIN` rather than issuing a new one every time. Re-running "Install" is safe at any
+point, including after a domain change.
 
 ## Diagram
 
@@ -56,9 +75,8 @@ missing. This project never touches Certbot, firewalld, or EPEL — those stay e
 ServiceNow PDI (Business Rule, RESTMessageV2)
         │  HTTPS (443)
         ▼
-   Nginx (dlpx-mcp-remote-server's shared vhost/certificate — server_name = its own hostname)
+   Nginx (this project's own vhost/certificate — server_name = DOMAIN)
         │  location /servicenow-webhook → proxy_pass → 127.0.0.1:8940 (loopback)
-        │  (location / still goes to dlpx-mcp-gateway on 127.0.0.1:8931, unaffected)
         ▼
 ┌───────────────────────────────────────────────────────────┐
 │ dlpx-servicenow-orchestrator (Python — FastAPI/uvicorn)     │
@@ -66,14 +84,9 @@ ServiceNow PDI (Business Rule, RESTMessageV2)
 │  - incident_agent.py: Claude call (app name + timestamp)     │
 │  - delphix_client.py: MCP tool calls (provision/tag/delete)  │
 │  - servicenow_client.py: Table API PATCH (work_notes + state) │
+│  - mcp_client.py: owns the long-lived dxi-mcp-server session │
 └───────────────────────────────────────────────────────────┘
-        │  MCP (Streamable HTTP/SSE), loopback, no auth  127.0.0.1:8930
-        ▼
-┌───────────────────────────────────────────────────────────┐
-│ mcp-proxy (part of dlpx-mcp-remote-server, already running) │
-│  spawns dxi-mcp-server as a subprocess via stdio             │
-└───────────────────────────────────────────────────────────┘
-        │  stdio (subprocess)
+        │  stdio (subprocess, spawned by this app at startup)
         ▼
 dxi-mcp-server ──▶ Delphix DCT ──▶ Delphix Engine
 ```
@@ -83,17 +96,18 @@ dxi-mcp-server ──▶ Delphix DCT ──▶ Delphix Engine
 ```
 /opt/dlpx-servicenow-orchestrator/
 ├── app/          # application source code (uploaded via scp on every install/update)
-│   └── .venv/    # created by `uv sync`
+│   └── .venv/    # created by `uv sync` — includes dxi-mcp-server's `dct-mcp-server` console script
 └── bin/check_status.sh   # permanently installed for the "status" action
 
 /etc/dlpx-servicenow-orchestrator/
-└── orchestrator.env   # ANTHROPIC_API_KEY, SERVICENOW_*, MCP_LOCAL_URL, etc. (600, root:root)
+└── orchestrator.env   # ANTHROPIC_API_KEY, DCT_BASE_URL, DCT_API_KEY, SERVICENOW_*, etc. (600, root:root)
+
+/etc/nginx/conf.d/dlpx-servicenow-orchestrator.conf   # this project's own vhost (see setup_nginx.sh)
+/etc/letsencrypt/live/<DOMAIN>/                        # this project's own certificate
 ```
 
 systemd unit: `dlpx-servicenow-orchestrator` (uvicorn, port `127.0.0.1:8940`), running as the dedicated system
-user `svcnow-orch` — distinct from `dlpx-mcp-remote-server`'s own `dlpxmcp` user, so file ownership never
-overlaps. Nginx itself is not installed or owned by this project — it's `dlpx-mcp-remote-server`'s Nginx, patched
-in place (see the decision above).
+user `svcnow-orch`.
 
 ## Decision: the orchestrator owns both ends of the incident lifecycle
 
@@ -141,7 +155,8 @@ teardown.
 Earlier design work (done against a different MCP wrapper) assumed dxi-mcp-server exposed fixed per-resource
 tools like `data_tool`/`job_tool` with actions such as `provision_by_timestamp`. Running the real, official
 [dxi-mcp-server](https://github.com/delphix/dxi-mcp-server) live against the demo VM's dSources (via
-`session.list_tools()` on the local mcp-proxy) showed this was wrong — it exposes exactly two tools:
+`session.list_tools()`, at the time reached through an intermediate MCP proxy this project no longer depends on —
+see "Decision: spawn dxi-mcp-server directly" above) showed this was wrong — it exposes exactly two tools:
 
 - `discovery` — browse a cached OpenAPI spec of the full DCT REST API (`list_tags`, `list_operations`,
   `get_operation_schema`).

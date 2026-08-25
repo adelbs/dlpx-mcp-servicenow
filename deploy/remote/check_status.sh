@@ -3,7 +3,7 @@
 # ./orchestrator.sh ("View status"). Read-only — changes nothing.
 set -uo pipefail
 
-echo "=== Service ==="
+echo "=== Services ==="
 for svc in dlpx-servicenow-orchestrator nginx; do
     # `systemctl is-active`/`is-enabled` always print a state to stdout
     # (active, inactive, failed, disabled, ...) even when they exit non-zero
@@ -16,17 +16,29 @@ for svc in dlpx-servicenow-orchestrator nginx; do
 done
 
 echo
-echo "=== Dependency: dlpx-mcp-remote-server (local MCP wrapper) ==="
-state=$(systemctl is-active dlpx-dct-mcp-proxy 2>/dev/null)
-printf '%-30s active=%s\n' "dlpx-dct-mcp-proxy" "${state:-not installed}"
+echo "=== Nginx vhost ==="
+if [ -f /etc/nginx/conf.d/dlpx-servicenow-orchestrator.conf ]; then
+    echo "Present: /etc/nginx/conf.d/dlpx-servicenow-orchestrator.conf"
+else
+    echo "MISSING: /etc/nginx/conf.d/dlpx-servicenow-orchestrator.conf — run the Install option."
+fi
 
 echo
-echo "=== Shared Nginx vhost route (/servicenow-webhook) ==="
-if grep -q "# BEGIN dlpx-servicenow-orchestrator" /etc/nginx/conf.d/dlpx-mcp.conf 2>/dev/null; then
-    echo "Present in /etc/nginx/conf.d/dlpx-mcp.conf."
+echo "=== TLS certificate ==="
+cert_dir=$(find /etc/letsencrypt/live -mindepth 1 -maxdepth 1 -type d -name '*' 2>/dev/null | head -n1)
+if [ -n "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ]; then
+    expiry=$(openssl x509 -enddate -noout -in "$cert_dir/fullchain.pem" 2>/dev/null | cut -d= -f2)
+    echo "Present: $cert_dir (expires: ${expiry:-unknown})"
 else
-    echo "MISSING from /etc/nginx/conf.d/dlpx-mcp.conf — run this orchestrator's"
-    echo "Install option again (it may have been wiped by a dlpx-mcp-remote-server reinstall)."
+    echo "No certificate found under /etc/letsencrypt/live — run the Install option."
+fi
+
+echo
+echo "=== dxi-mcp-server (dct-mcp-server, spawned directly by the app) ==="
+if [ -x /opt/dlpx-servicenow-orchestrator/.venv/bin/dct-mcp-server ]; then
+    echo "Installed: /opt/dlpx-servicenow-orchestrator/.venv/bin/dct-mcp-server"
+else
+    echo "MISSING — run 'uv sync' (Install or Update) to install it as a project dependency."
 fi
 
 echo

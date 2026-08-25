@@ -1,10 +1,9 @@
 [Unit]
 Description=dlpx-servicenow-orchestrator - Delphix <-> ServiceNow incident-driven VDB orchestrator
-# Ordering only (After=), not Requires=: this project and
-# dlpx-mcp-remote-server are deployed/updated/uninstalled independently, so
-# a hard Requires= would mean stopping/restarting the MCP wrapper also stops
-# this orchestrator, which isn't desired.
-After=network.target dlpx-dct-mcp-proxy.service
+# dxi-mcp-server (dct-mcp-server) is spawned directly by this app itself
+# (app/mcp_client.py) as a stdio subprocess, not a separate systemd unit —
+# no external MCP service to order against.
+After=network.target
 
 [Service]
 Type=simple

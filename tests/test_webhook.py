@@ -144,7 +144,7 @@ def test_notify_failure_does_not_raise_if_servicenow_patch_also_fails():
     with (
         patch(
             "app.main.delphix_client.find_vdb_by_incident_tag",
-            new=AsyncMock(side_effect=RuntimeError("mcp-proxy unreachable")),
+            new=AsyncMock(side_effect=RuntimeError("dct-mcp-server unreachable")),
         ),
         patch(
             "app.main.servicenow_client.patch_incident",

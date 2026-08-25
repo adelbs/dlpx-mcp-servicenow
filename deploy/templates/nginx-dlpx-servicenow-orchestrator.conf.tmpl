@@ -1,0 +1,25 @@
+# Rendered by deploy/remote/setup_nginx.sh, then handed to `certbot --nginx`
+# which edits this same file in place to add the "listen 443 ssl" block,
+# certificate paths, and an HTTP->HTTPS redirect. Re-rendered from this
+# plain-HTTP template on every install (deliberately — see setup_nginx.sh),
+# so this file should only ever contain the plain-HTTP starting point.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{DOMAIN}};
+
+    location /servicenow-webhook {
+        proxy_pass http://127.0.0.1:8940/servicenow-webhook;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:8940/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+}

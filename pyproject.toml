@@ -12,6 +12,12 @@ dependencies = [
     "mcp>=1.9.0",
     "pydantic-settings>=2.4",
     "python-dotenv>=1.0",
+    # The official Delphix DCT MCP server (console script `dct-mcp-server`),
+    # spawned directly as a stdio subprocess by app/mcp_client.py — see
+    # docs/architecture.md. Not on PyPI, installed straight from source; `uv
+    # sync`/`uv lock` pin the resolved commit in uv.lock, so installs stay
+    # reproducible until this ref is deliberately bumped.
+    "dct-mcp-server @ git+https://github.com/delphix/dxi-mcp-server.git",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +32,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.hatch.metadata]
+# Required for the dct-mcp-server git dependency above (a PEP 508 direct
+# reference — no PyPI package exists for it).
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

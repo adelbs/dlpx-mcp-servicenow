@@ -6,12 +6,13 @@
 #
 # Expects to find, in STAGING_DIR (uploaded beforehand via scp by
 # deploy/lib/action_install.sh):
-#   - deploy_vars.env   (DOMAIN, ANTHROPIC_API_KEY, ANTHROPIC_MODEL,
-#                         MCP_LOCAL_URL, SERVICENOW_*)
+#   - deploy_vars.env   (DOMAIN, LETSENCRYPT_EMAIL, ANTHROPIC_API_KEY,
+#                         ANTHROPIC_MODEL, DCT_BASE_URL, DCT_API_KEY,
+#                         SERVICENOW_*)
 #   - app/              (application source code)
 #   - pyproject.toml
-#   - templates/        (systemd unit template)
-#   - patch_shared_nginx.sh
+#   - templates/        (systemd unit + Nginx vhost templates)
+#   - setup_nginx.sh
 set -euo pipefail
 
 STAGING_DIR="${1:-/tmp/dlpx-svcnow-orch-deploy}"
@@ -36,12 +37,14 @@ fi
 source "$STAGING_DIR/deploy_vars.env"
 
 : "${DOMAIN:?DOMAIN not set in deploy_vars.env}"
+: "${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL not set in deploy_vars.env}"
 : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY not set in deploy_vars.env}"
+: "${DCT_BASE_URL:?DCT_BASE_URL not set in deploy_vars.env}"
+: "${DCT_API_KEY:?DCT_API_KEY not set in deploy_vars.env}"
 : "${SERVICENOW_INSTANCE_URL:?SERVICENOW_INSTANCE_URL not set in deploy_vars.env}"
 : "${SERVICENOW_USER:?SERVICENOW_USER not set in deploy_vars.env}"
 : "${SERVICENOW_PASSWORD:?SERVICENOW_PASSWORD not set in deploy_vars.env}"
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}"
-MCP_LOCAL_URL="${MCP_LOCAL_URL:-http://127.0.0.1:8930/sse}"
 
 export PATH="/usr/local/bin:$PATH"
 
@@ -67,7 +70,8 @@ install -m 600 -o root -g root /dev/null "$ETC_DIR/orchestrator.env"
 cat > "$ETC_DIR/orchestrator.env" <<EOF
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
-MCP_LOCAL_URL=${MCP_LOCAL_URL}
+DCT_BASE_URL=${DCT_BASE_URL}
+DCT_API_KEY=${DCT_API_KEY}
 SERVICENOW_INSTANCE_URL=${SERVICENOW_INSTANCE_URL}
 SERVICENOW_USER=${SERVICENOW_USER}
 SERVICENOW_PASSWORD=${SERVICENOW_PASSWORD}
@@ -94,10 +98,10 @@ systemctl enable --now dlpx-servicenow-orchestrator
 # Pick up code/config changes on a re-install, not just a first start.
 systemctl restart dlpx-servicenow-orchestrator
 
-# -- 5. Patch the shared Nginx vhost (see patch_shared_nginx.sh for why) -----
+# -- 5. Own Nginx vhost + Let's Encrypt certificate (see setup_nginx.sh) ----
 
-log "Patching the shared Nginx vhost (dlpx-mcp-remote-server's) with the /servicenow-webhook route..."
-"$STAGING_DIR/patch_shared_nginx.sh"
+log "Setting up this project's own Nginx vhost and TLS certificate for $DOMAIN..."
+"$STAGING_DIR/setup_nginx.sh" "$STAGING_DIR" "$DOMAIN" "$LETSENCRYPT_EMAIL"
 
 # -- 6. Install the status script at a permanent location (outside of
 #       staging, which is removed next) for future "status" runs.
@@ -105,13 +109,20 @@ log "Patching the shared Nginx vhost (dlpx-mcp-remote-server's) with the /servic
 mkdir -p "$SERVICE_HOME/bin"
 install -m 750 -o root -g root "$STAGING_DIR/check_status.sh" "$SERVICE_HOME/bin/check_status.sh"
 
-# -- 7. Sanity check: is dlpx-mcp-remote-server's local mcp-proxy reachable? -
+# -- 7. Sanity check: did the app (and its dct-mcp-server subprocess) start? -
+# app/main.py's lifespan spawns dct-mcp-server and opens the MCP session at
+# boot, failing fast if DCT_BASE_URL/DCT_API_KEY are wrong or the subprocess
+# can't start — so a healthy /health response here is real signal, not just
+# "uvicorn is up".
 
-if systemctl is-active --quiet dlpx-dct-mcp-proxy; then
-    log "dlpx-dct-mcp-proxy (dlpx-mcp-remote-server) is active on this host — good."
+log "Checking that the app started successfully (via /health)..."
+sleep 2
+if curl -sf -m 5 http://127.0.0.1:8940/health >/dev/null; then
+    log "App is up and healthy."
 else
-    log "WARNING: dlpx-dct-mcp-proxy is not active on this host. This orchestrator"
-    log "needs dlpx-mcp-remote-server installed and running locally (127.0.0.1:8930)."
+    log "WARNING: http://127.0.0.1:8940/health did not respond. Check 'journalctl -u"
+    log "dlpx-servicenow-orchestrator' — a common cause is a bad DCT_BASE_URL/DCT_API_KEY,"
+    log "which makes dct-mcp-server (and so the app) fail to start."
 fi
 
 # -- 8. Cleanup ---------------------------------------------------------------

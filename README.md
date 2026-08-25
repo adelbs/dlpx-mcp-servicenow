@@ -15,19 +15,15 @@ how the ServiceNow side was configured.
 ## Architecture, in one sentence
 
 ```
-ServiceNow (Business Rule, RESTMessageV2) --HTTPS--> Nginx (dlpx-mcp-remote-server's shared vhost)
+ServiceNow (Business Rule, RESTMessageV2) --HTTPS--> Nginx (this project's own vhost/certificate)
     --/servicenow-webhook--> uvicorn (this app)
-    --MCP/local--> mcp-proxy (dlpx-mcp-remote-server, already running on the same host)
-    --stdio--> dxi-mcp-server --> Delphix DCT
+    --stdio (subprocess)--> dxi-mcp-server --> Delphix DCT
 ```
 
-This project is designed to run **on the same server as
-[`dlpx-mcp-remote-server`](https://github.com/adelbs/dlpx-mcp-remote-server)**, reusing its already-running local
-MCP endpoint (`127.0.0.1:8930`) instead of talking to the Delphix DCT REST API directly. It also has **no Nginx
-vhost or TLS certificate of its own** — on a lab VM with no wildcard DNS there's no spare subdomain, so it adds a
-`location /servicenow-webhook` route to `dlpx-mcp-remote-server`'s existing vhost/certificate instead. See
-[docs/architecture.md](docs/architecture.md) and §3.7/§3.8 of the spec for the full reasoning and how the two
-projects avoid colliding on ports, service users and directories.
+This project is fully self-contained: it installs and owns its own Nginx, Let's Encrypt certificate, firewall
+rules and systemd service, and spawns [`dxi-mcp-server`](https://github.com/delphix/dxi-mcp-server) (the official
+Delphix DCT MCP server) directly as a subprocess of the app itself — no other project or already-running service
+needs to be present on the host. See [docs/architecture.md](docs/architecture.md) for the full reasoning.
 
 ## Quick start (deploying to the server)
 
@@ -50,11 +46,12 @@ This opens a menu:
 0) Exit
 ```
 
-The first time you choose **1) Install**, the menu asks for the essentials (SSH host/user, `dlpx-mcp-remote-server`'s
-existing public hostname, ServiceNow credentials, Anthropic API key) and saves them to `deploy/deploy.conf`
-(gitignored) so it won't ask again. From there the script connects to the CentOS server via SSH and does
-everything else: installs prerequisites, uploads the application code, configures systemd, starts the service, and
-patches `dlpx-mcp-remote-server`'s shared Nginx vhost with the `/servicenow-webhook` route.
+The first time you choose **1) Install**, the menu asks for the essentials (SSH host/user, the public hostname to
+issue a certificate for, a Let's Encrypt email, ServiceNow credentials, Anthropic API key, DCT credentials) and
+saves them to `deploy/deploy.conf` (gitignored) so it won't ask again. From there the script connects to the
+CentOS server via SSH and does everything else: installs Nginx/Certbot/firewalld and `uv`, uploads the application
+code (which pulls in `dxi-mcp-server` as a dependency), configures systemd, starts the service, and sets up this
+project's own Nginx vhost and TLS certificate for `DOMAIN`.
 
 At the end, it prints the URL to set as the `delphix.orchestrator_webhook_url` system property in ServiceNow.
 
@@ -62,9 +59,13 @@ You can also call an option directly without the interactive menu: `./orchestrat
 
 ## Running locally for development
 
+`uv sync` also installs `dxi-mcp-server` (a project dependency — see `pyproject.toml`), which the app spawns
+directly as a subprocess on startup, so you need a real (or reachable) DCT instance and API key even for local
+development:
+
 ```bash
 uv sync --extra dev
-cp .env.example .env   # fill in the values
+cp .env.example .env   # fill in the values, including DCT_BASE_URL/DCT_API_KEY
 uv run uvicorn app.main:app --reload --port 8940
 ```
 
@@ -82,13 +83,13 @@ curl -X POST http://127.0.0.1:8940/servicenow-webhook \
 
 ## Repository structure
 
-- [`app/`](app/) — the FastAPI application: `main.py` (the `/servicenow-webhook` route), `incident_agent.py`
-  (Claude call to extract the affected app + timestamp), `delphix_client.py` + `mcp_client.py` (MCP client talking
-  to the local `dlpx-mcp-remote-server` endpoint), `servicenow_client.py` (Table API `PATCH` of `work_notes` and
-  `state`).
+- [`app/`](app/) — the FastAPI application: `main.py` (the `/servicenow-webhook` route; its `lifespan` starts/stops
+  the `dxi-mcp-server` subprocess), `incident_agent.py` (Claude call to extract the affected app + timestamp),
+  `delphix_client.py` + `mcp_client.py` (MCP client spawning and talking to `dxi-mcp-server` directly over stdio),
+  `servicenow_client.py` (Table API `PATCH` of `work_notes` and `state`).
 - [`deploy/`](deploy/) — everything related to installing/operating the remote service: the scripts that run on
   this machine (`deploy/lib/`), the ones that run inside the server (`deploy/remote/`, including
-  `patch_shared_nginx.sh`), and the systemd unit template (`deploy/templates/`).
+  `setup_nginx.sh`), and the systemd + Nginx templates (`deploy/templates/`).
 - [`orchestrator.sh`](orchestrator.sh) — single entry point (interactive menu).
 - [`docs/`](docs/) — [`architecture.md`](docs/architecture.md) (design decisions),
   [`delphix_servicenow_orchestrator_spec.md`](docs/delphix_servicenow_orchestrator_spec.md) (full handoff spec),

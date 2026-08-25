@@ -5,11 +5,10 @@ action_uninstall() {
     require_conf_for_ssh || return 1
 
     echo
-    log_warn "This will STOP and REMOVE the service, the code, and the environment"
-    log_warn "file (secrets) on server $SSH_HOST."
-    log_warn "System packages (nginx, certbot, uv, etc.) and the issued TLS"
-    log_warn "certificate are NOT removed. dlpx-mcp-remote-server (the MCP wrapper)"
-    log_warn "running on the same server is NOT affected."
+    log_warn "This will STOP and REMOVE the service, the code, this project's own Nginx"
+    log_warn "vhost, and the environment file (secrets) on server $SSH_HOST."
+    log_warn "System packages (nginx, certbot, firewalld, uv, etc.) and the issued TLS"
+    log_warn "certificate under /etc/letsencrypt are NOT removed."
     read -r -p "Type 'uninstall' to confirm: " confirm
     if [ "$confirm" != "uninstall" ]; then
         log_info "Cancelled — nothing was changed."

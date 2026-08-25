@@ -1,9 +1,11 @@
 import json
 import logging
-from contextlib import asynccontextmanager
+import os
+from asyncio import Lock
+from contextlib import AsyncExitStack
 
-from mcp import ClientSession
-from mcp.client.sse import sse_client
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from .config import settings
 
@@ -18,12 +20,51 @@ class DCTAPIError(RuntimeError):
     pass
 
 
-@asynccontextmanager
-async def _session():
-    async with sse_client(settings.mcp_local_url) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            yield session
+# dxi-mcp-server only speaks stdio (no built-in SSE/HTTP mode — confirmed
+# against its source: it always calls `run_stdio_async()`), so it's spawned
+# once as a subprocess and kept alive for the app's lifetime (started/stopped
+# by app/main.py's lifespan), rather than per call. A fresh subprocess per
+# call would reload/cache dxi-mcp-server's DCT OpenAPI spec every time, and
+# app/delphix_client.py's poll_job() calls this every few seconds for up to
+# job_poll_timeout_seconds (900s default) while waiting on a provision/delete
+# job — that would mean dozens of process spawns per incident.
+_exit_stack: AsyncExitStack | None = None
+_session: ClientSession | None = None
+_lock = Lock()
+
+
+async def start() -> None:
+    """Spawn dct-mcp-server and open the long-lived MCP session. Call once at
+    app startup; safe to call again (no-op) if already started."""
+    global _exit_stack, _session
+    if _session is not None:
+        return
+
+    params = StdioServerParameters(
+        command=settings.dct_mcp_command,
+        env={**os.environ, "DCT_API_KEY": settings.dct_api_key, "DCT_BASE_URL": settings.dct_base_url},
+    )
+    stack = AsyncExitStack()
+    try:
+        read, write = await stack.enter_async_context(stdio_client(params))
+        session = await stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+    except Exception:
+        await stack.aclose()
+        raise
+
+    _exit_stack = stack
+    _session = session
+    logger.info("dct-mcp-server started (command=%r) and MCP session initialized.", settings.dct_mcp_command)
+
+
+async def stop() -> None:
+    """Terminate the dct-mcp-server subprocess and close the MCP session."""
+    global _exit_stack, _session
+    if _exit_stack is not None:
+        await _exit_stack.aclose()
+    _exit_stack = None
+    _session = None
 
 
 def _extract_text(result) -> str:
@@ -35,9 +76,18 @@ async def call_tool(name: str, arguments: dict) -> dict:
     """Call an MCP tool (dxi-mcp-server exposes exactly two: `discovery` and
     `execute` — see app/delphix_client.py's module docstring) and return its
     JSON-decoded structured content."""
+    if _session is None:
+        raise MCPToolError(
+            "MCP session with dct-mcp-server isn't started — app/main.py's lifespan should have "
+            "called mcp_client.start() at boot."
+        )
     arguments = {k: v for k, v in arguments.items() if v is not None}
-    async with _session() as session:
-        result = await session.call_tool(name, arguments)
+    # Serializes tool calls over the single shared stdio session — this app's
+    # actual traffic is low-volume/sequential per incident, so a lock is a
+    # simple way to sidestep any doubt about concurrent-call safety on one
+    # stdio pipe, rather than something observed to be needed.
+    async with _lock:
+        result = await _session.call_tool(name, arguments)
 
     text = _extract_text(result)
     if result.isError:
