@@ -18,6 +18,7 @@ dependencies = [
     # sync`/`uv lock` pin the resolved commit in uv.lock, so installs stay
     # reproducible until this ref is deliberately bumped.
     "dct-mcp-server @ git+https://github.com/delphix/dxi-mcp-server.git",
+    "ollama>=0.6.2",
 ]
 
 [project.optional-dependencies]

@@ -6,9 +6,9 @@
 #
 # Expects to find, in STAGING_DIR (uploaded beforehand via scp by
 # deploy/lib/action_install.sh):
-#   - deploy_vars.env   (DOMAIN, LETSENCRYPT_EMAIL, ANTHROPIC_API_KEY,
-#                         ANTHROPIC_MODEL, DCT_BASE_URL, DCT_API_KEY,
-#                         SERVICENOW_*)
+#   - deploy_vars.env   (DOMAIN, LETSENCRYPT_EMAIL, LLM_PROVIDER,
+#                         ANTHROPIC_API_KEY, ANTHROPIC_MODEL, OLLAMA_MODEL,
+#                         DCT_BASE_URL, DCT_API_KEY, SERVICENOW_*)
 #   - app/              (application source code)
 #   - pyproject.toml
 #   - templates/        (systemd unit + Nginx vhost templates)
@@ -38,13 +38,18 @@ source "$STAGING_DIR/deploy_vars.env"
 
 : "${DOMAIN:?DOMAIN not set in deploy_vars.env}"
 : "${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL not set in deploy_vars.env}"
-: "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY not set in deploy_vars.env}"
 : "${DCT_BASE_URL:?DCT_BASE_URL not set in deploy_vars.env}"
 : "${DCT_API_KEY:?DCT_API_KEY not set in deploy_vars.env}"
 : "${SERVICENOW_INSTANCE_URL:?SERVICENOW_INSTANCE_URL not set in deploy_vars.env}"
 : "${SERVICENOW_USER:?SERVICENOW_USER not set in deploy_vars.env}"
 : "${SERVICENOW_PASSWORD:?SERVICENOW_PASSWORD not set in deploy_vars.env}"
 ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}"
+LLM_PROVIDER="${LLM_PROVIDER:-anthropic}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
+OLLAMA_BASE_URL="http://127.0.0.1:11434"
+if [ "$LLM_PROVIDER" = "anthropic" ]; then
+    : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY not set in deploy_vars.env (required when LLM_PROVIDER=anthropic)}"
+fi
 
 export PATH="/usr/local/bin:$PATH"
 
@@ -64,12 +69,22 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_HOME"
 log "Running 'uv sync'..."
 sudo -u "$SERVICE_USER" -H bash -c "cd '$SERVICE_HOME' && /usr/local/bin/uv sync"
 
+if [ "$LLM_PROVIDER" = "ollama" ]; then
+    log "LLM_PROVIDER=ollama — pulling $OLLAMA_MODEL (this can take a while on first run)..."
+    ollama pull "$OLLAMA_MODEL"
+else
+    log "LLM_PROVIDER=anthropic — skipping Ollama model pull (Ollama itself stays installed, idle)."
+fi
+
 # -- 2. Environment file (secrets), 600 root:root ----------------------------
 
 install -m 600 -o root -g root /dev/null "$ETC_DIR/orchestrator.env"
 cat > "$ETC_DIR/orchestrator.env" <<EOF
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+LLM_PROVIDER=${LLM_PROVIDER}
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
+OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+OLLAMA_MODEL=${OLLAMA_MODEL}
 DCT_BASE_URL=${DCT_BASE_URL}
 DCT_API_KEY=${DCT_API_KEY}
 SERVICENOW_INSTANCE_URL=${SERVICENOW_INSTANCE_URL}

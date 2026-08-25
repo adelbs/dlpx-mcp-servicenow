@@ -1,6 +1,7 @@
 import shutil
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,8 +25,23 @@ def _default_dct_mcp_command() -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    anthropic_api_key: str
+    # Which backend app/incident_agent.py uses to extract app_name +
+    # problem_timestamp from incident text. "ollama" runs fully locally (see
+    # docs/architecture.md for model/hardware sizing) — no per-call API cost,
+    # at the trade-off of a much smaller model's extraction reliability.
+    llm_provider: Literal["anthropic", "ollama"] = "anthropic"
+
+    # Required only when llm_provider="anthropic" (validated lazily in
+    # app/incident_agent.py, not here, so an Ollama-only deployment doesn't
+    # need this set at all).
+    anthropic_api_key: str | None = None
     anthropic_model: str = "claude-haiku-4-5-20251001"
+
+    # Local Ollama server (no API key — loopback only). ollama_model must
+    # support tool calling (llama3.2/qwen2.5 do); see docs/architecture.md
+    # for why 3B is the recommended default on modest hardware.
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "llama3.2:3b"
 
     # dxi-mcp-server (https://github.com/delphix/dxi-mcp-server, package
     # `dct-mcp-server`) is spawned directly as a stdio subprocess by

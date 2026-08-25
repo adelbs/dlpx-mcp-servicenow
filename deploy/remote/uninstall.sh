@@ -7,11 +7,11 @@
 # the environment file (secrets), the service user, and this project's own
 # Nginx vhost.
 #
-# Does NOT remove generic system packages (nginx, certbot, firewalld, uv) or
-# the issued TLS certificate under /etc/letsencrypt — those may be reused by
-# a future reinstall, and removing a Let's Encrypt certificate is easy to
-# get wrong (rate limits on reissuing). Idempotent: safe to run even if some
-# of this is already gone.
+# Does NOT remove generic system packages (nginx, certbot, firewalld, uv,
+# ollama) or the issued TLS certificate under /etc/letsencrypt — those may be
+# reused by a future reinstall, and removing a Let's Encrypt certificate is
+# easy to get wrong (rate limits on reissuing). Idempotent: safe to run even
+# if some of this is already gone.
 set -uo pipefail
 
 SERVICE_USER="svcnow-orch"
@@ -52,4 +52,5 @@ if id -u "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 
 log "Uninstall complete."
-echo "nginx, certbot, firewalld, uv, and the TLS certificate under /etc/letsencrypt were NOT touched."
+echo "nginx, certbot, firewalld, uv, ollama (including any pulled models), and the TLS certificate"
+echo "under /etc/letsencrypt were NOT touched."

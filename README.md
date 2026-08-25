@@ -1,8 +1,10 @@
 # dlpx-mcp-servicenow
 
 Incident-driven VDB orchestrator: when a ServiceNow analyst moves an Incident to **Prioritized**, this service
-reads the incident text, asks Claude to identify the affected application and the moment the problem occurred,
-and uses Delphix to provision a VDB from the closest snapshot — ready for investigation. Once the VDB is ready,
+reads the incident text, asks an LLM (Claude by default, or a local [Ollama](https://ollama.com) model — see
+`LLM_PROVIDER` below and [docs/architecture.md](docs/architecture.md)) to identify the affected application and
+the moment the problem occurred, and uses Delphix to provision a VDB from the closest snapshot — ready for
+investigation. Once the VDB is ready,
 the orchestrator itself moves the incident to **In Progress**. When the analyst resolves the incident
 (**Resolved**), the VDB is destroyed automatically and the orchestrator closes the incident (**Closed**). The
 analyst only ever has to move an incident to Prioritized or Resolved — the orchestrator owns both ends of its own
@@ -47,7 +49,8 @@ This opens a menu:
 ```
 
 The first time you choose **1) Install**, the menu asks for the essentials (SSH host/user, the public hostname to
-issue a certificate for, a Let's Encrypt email, ServiceNow credentials, Anthropic API key, DCT credentials) and
+issue a certificate for, a Let's Encrypt email, which LLM provider to use, ServiceNow credentials, DCT
+credentials) and
 saves them to `deploy/deploy.conf` (gitignored) so it won't ask again. From there the script connects to the
 CentOS server via SSH and does everything else: installs Nginx/Certbot/firewalld and `uv`, uploads the application
 code (which pulls in `dxi-mcp-server` as a dependency), configures systemd, starts the service, and sets up this
@@ -84,7 +87,8 @@ curl -X POST http://127.0.0.1:8940/servicenow-webhook \
 ## Repository structure
 
 - [`app/`](app/) — the FastAPI application: `main.py` (the `/servicenow-webhook` route; its `lifespan` starts/stops
-  the `dxi-mcp-server` subprocess), `incident_agent.py` (Claude call to extract the affected app + timestamp),
+  the `dxi-mcp-server` subprocess), `incident_agent.py` (LLM call — Anthropic or local Ollama, see `LLM_PROVIDER` —
+  to extract the affected app + timestamp),
   `delphix_client.py` + `mcp_client.py` (MCP client spawning and talking to `dxi-mcp-server` directly over stdio),
   `servicenow_client.py` (Table API `PATCH` of `work_notes` and `state`).
 - [`deploy/`](deploy/) — everything related to installing/operating the remote service: the scripts that run on

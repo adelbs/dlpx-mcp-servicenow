@@ -47,7 +47,8 @@ ensure_conf() {
 
     log_warn "deploy/deploy.conf not found — let's create it now (only asked once)."
     local ssh_host ssh_user ssh_port domain letsencrypt_email
-    local anthropic_api_key anthropic_model dct_base_url dct_api_key
+    local llm_provider anthropic_api_key anthropic_model ollama_model
+    local dct_base_url dct_api_key
     local servicenow_instance_url servicenow_user servicenow_password
 
     ssh_host=$(prompt_default "CentOS server host/IP" "")
@@ -55,8 +56,18 @@ ensure_conf() {
     ssh_port=$(prompt_default "SSH port" "22")
     domain=$(prompt_default "Public hostname for this orchestrator's own Nginx vhost/TLS certificate (must already have a DNS A/AAAA record pointing at this server)" "$ssh_host")
     letsencrypt_email=$(prompt_default "Email for Let's Encrypt (certificate expiry notices)" "")
-    anthropic_api_key=$(prompt_secret "ANTHROPIC_API_KEY")
-    anthropic_model=$(prompt_default "ANTHROPIC_MODEL" "claude-haiku-4-5-20251001")
+
+    llm_provider=$(prompt_default "LLM_PROVIDER for incident text extraction ('anthropic' or 'ollama' — Ollama runs fully locally on this same server, no per-call cost, but needs a beefier model to match Claude's reliability; see docs/architecture.md)" "anthropic")
+    anthropic_model="claude-haiku-4-5-20251001"
+    ollama_model="llama3.2:3b"
+    anthropic_api_key=""
+    if [ "$llm_provider" = "ollama" ]; then
+        ollama_model=$(prompt_default "OLLAMA_MODEL (must support tool calling — llama3.2/qwen2.5 do; pick a size that fits this server's free RAM, see docs/architecture.md)" "$ollama_model")
+    else
+        anthropic_api_key=$(prompt_secret "ANTHROPIC_API_KEY")
+        anthropic_model=$(prompt_default "ANTHROPIC_MODEL" "$anthropic_model")
+    fi
+
     dct_base_url=$(prompt_default "DCT_BASE_URL (Delphix DCT instance URL, no trailing /dct)" "")
     dct_api_key=$(prompt_secret "DCT_API_KEY (same credential dxi-mcp-server uses to call DCT)")
     servicenow_instance_url=$(prompt_default "SERVICENOW_INSTANCE_URL" "")
@@ -69,8 +80,10 @@ SSH_USER="$ssh_user"
 SSH_PORT="$ssh_port"
 DOMAIN="$domain"
 LETSENCRYPT_EMAIL="$letsencrypt_email"
+LLM_PROVIDER="$llm_provider"
 ANTHROPIC_API_KEY="$anthropic_api_key"
 ANTHROPIC_MODEL="$anthropic_model"
+OLLAMA_MODEL="$ollama_model"
 DCT_BASE_URL="$dct_base_url"
 DCT_API_KEY="$dct_api_key"
 SERVICENOW_INSTANCE_URL="$servicenow_instance_url"

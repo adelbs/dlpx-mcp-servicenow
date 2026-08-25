@@ -3,11 +3,11 @@
 # ./orchestrator.sh ("Install"). Idempotent: safe to run again any time.
 #
 # This project is fully self-contained: it installs and owns its own Nginx,
-# Certbot/TLS certificate and firewall rules (no dependency on
-# dlpx-mcp-remote-server or any other project being present on the host —
-# see docs/architecture.md). dxi-mcp-server itself isn't installed here: it's
-# a project dependency in pyproject.toml, installed into the venv by `uv
-# sync` in configure_and_start.sh.
+# Certbot/TLS certificate, firewall rules and (optionally used) local Ollama
+# server — no dependency on dlpx-mcp-remote-server or any other project being
+# present on the host — see docs/architecture.md. dxi-mcp-server itself isn't
+# installed here: it's a project dependency in pyproject.toml, installed
+# into the venv by `uv sync` in configure_and_start.sh.
 set -euo pipefail
 
 SERVICE_USER="svcnow-orch"
@@ -51,6 +51,34 @@ if ! command -v uv >/dev/null 2>&1; then
 else
     log "uv already installed: $(uv --version)"
 fi
+
+# Always installed (cheap — idle Ollama is just its server process, no model
+# loaded yet — see docs/architecture.md), regardless of LLM_PROVIDER, so
+# switching from Anthropic to local inference later doesn't need a reinstall.
+# configure_and_start.sh only pulls a model when LLM_PROVIDER=ollama.
+if ! command -v ollama >/dev/null 2>&1; then
+    log "Installing Ollama..."
+    curl -fsSL https://ollama.com/install.sh | sh
+else
+    log "Ollama already installed: $(ollama --version 2>&1 | head -n1)"
+fi
+
+# This host has modest RAM (see docs/architecture.md) — cap Ollama to one
+# loaded model / one in-flight request at a time (this app only ever issues
+# one sequential call per incident, so there's no concurrency to gain from
+# the defaults), and unload an idle model after 5 minutes so its RAM is
+# freed between incidents rather than held indefinitely.
+log "Configuring Ollama resource limits (OLLAMA_MAX_LOADED_MODELS, OLLAMA_NUM_PARALLEL, OLLAMA_KEEP_ALIVE)..."
+mkdir -p /etc/systemd/system/ollama.service.d
+cat > /etc/systemd/system/ollama.service.d/resource-limits.conf <<'EOF'
+[Service]
+Environment="OLLAMA_MAX_LOADED_MODELS=1"
+Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_KEEP_ALIVE=5m"
+EOF
+systemctl daemon-reload
+systemctl enable --now ollama
+systemctl restart ollama
 
 if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
     log "Creating service user '$SERVICE_USER'..."

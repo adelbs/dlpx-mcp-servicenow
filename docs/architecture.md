@@ -109,6 +109,58 @@ dxi-mcp-server ──▶ Delphix DCT ──▶ Delphix Engine
 systemd unit: `dlpx-servicenow-orchestrator` (uvicorn, port `127.0.0.1:8940`), running as the dedicated system
 user `svcnow-orch`.
 
+## Decision: `LLM_PROVIDER` — Anthropic by default, local Ollama as a no-cost option
+
+`app/incident_agent.py` makes exactly one LLM call per incident: extract `app_name` + `problem_timestamp` from the
+incident text via forced tool-calling. Even at Anthropic's cheapest tier (`claude-haiku-4-5`, `max_tokens=300`,
+a short prompt) this is a real per-call cost, so `settings.llm_provider` (`"anthropic"` | `"ollama"`) lets it run
+against a fully local model instead — no external API call, no per-incident cost — while keeping Anthropic as the
+default and as a fallback if the local model isn't reliable enough. `extract_incident_context()` stays the single
+entry point `app/main.py` calls; it just dispatches to `_extract_via_anthropic()` (unchanged) or
+`_extract_via_ollama()` based on that setting. Both Anthropic and Ollama clients are constructed lazily (not at
+import time), so an Ollama-only deployment never needs `ANTHROPIC_API_KEY` set.
+
+**Ollama also speaks tool-calling**, in an OpenAI-style shape: `{"type": "function", "function": {"name", "description",
+"parameters"}}`, vs. Anthropic's `{"name", "description", "input_schema"}`. Since both use a plain JSON Schema
+object for the arguments, `_OLLAMA_TOOL` reuses `_EXTRACT_TOOL["input_schema"]` directly as `parameters` rather
+than keeping two copies of the schema in sync. The model must support tool calling — `llama3.2` and `qwen2.5` do;
+not every model Ollama can run does.
+
+### Model/hardware sizing
+
+Ollama runs models via llama.cpp on quantized (GGUF) weights. Rule of thumb for RAM: **~0.5-0.6 GB per billion
+parameters** at Ollama's default quantization (Q4_K_M), plus a small, mostly-fixed amount for context/runtime
+overhead (this task's prompt is a few hundred tokens at most, so KV-cache overhead is negligible next to the
+weights themselves).
+
+| Model (Ollama tag) | Download | RAM once loaded | Fit for this app |
+|---|---|---|---|
+| `llama3.2:3b` (default) | ~2.0 GB | ~3 GB | Recommended on modest hardware — supports tool calling, safe margin on a host with only ~4-8GB free |
+| `qwen2.5:3b` | ~1.9 GB | ~3 GB | Equivalent alternative; Qwen models are often cited as reliable at structured output |
+| `llama3.1:8b` | ~4.7 GB | ~6-7 GB | Only if the host genuinely has 8GB+ free after every other service — risky at the low end of a 4-8GB range |
+| `qwen2.5:1.5b` | <1 GB | ~1-2 GB | Fits easily, but a higher risk of skipping the tool call on an already-simple-but-precision-sensitive task |
+
+No GPU needed — CPU-only inference for a 3B Q4 model on a modern multi-core CPU runs roughly 10-30 tokens/s, i.e.
+a few seconds per incident (the actual output is just two short fields via the tool call). That's fine here: the
+ServiceNow Business Rules that trigger this webhook are `when: async`, and this app has no sub-second latency
+requirement — it's a background automation step, not an interactive chat.
+
+`deploy/remote/install_prereqs.sh` installs Ollama unconditionally (its own idle footprint is negligible — just
+the server process, no model loaded until a request comes in), so switching `LLM_PROVIDER` later doesn't need a
+reinstall; `deploy/remote/configure_and_start.sh` only runs `ollama pull "$OLLAMA_MODEL"` when
+`LLM_PROVIDER=ollama`, to avoid an unnecessary multi-GB download otherwise. Given the modest RAM budget,
+`install_prereqs.sh` also drops in `OLLAMA_MAX_LOADED_MODELS=1` and `OLLAMA_NUM_PARALLEL=1` (this app only ever
+issues one sequential call per incident — no concurrency to gain from Ollama's defaults) and
+`OLLAMA_KEEP_ALIVE=5m` (frees the loaded model's RAM between incidents, trading a few seconds of reload latency
+on the next cold call).
+
+**Trade-off accepted knowingly**: a 3B model is meaningfully less reliable than Claude Haiku at following the
+tool-calling contract on free-form incident text. `_extract_via_ollama()` raises `IncidentAgentError` (same error
+surface `_extract_via_anthropic()` already has) when the model doesn't return a tool call — `main.py`'s existing
+top-level handler catches that and leaves a `work_notes` comment on the incident rather than failing silently, so
+a bad extraction is visible to the analyst either way. Before switching the default, compare extraction quality
+against both providers on real incident text (see the plan's verification steps).
+
 ## Decision: the orchestrator owns both ends of the incident lifecycle
 
 Initially, ServiceNow's Business Rules fired on `In Progress` (provision) and `Resolved`/`Closed`/`Canceled`

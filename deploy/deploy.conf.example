@@ -18,10 +18,22 @@ SSH_PORT="22"
 DOMAIN="my-server.example.com"
 LETSENCRYPT_EMAIL="you@example.com"
 
-# Anthropic API key used to extract the affected app + timestamp from the
-# incident text.
+# Which backend extracts the affected app + timestamp from the incident
+# text: "anthropic" (Claude API, small per-call cost) or "ollama" (runs
+# fully locally on this same server via install_prereqs.sh's Ollama install
+# — no per-call cost, needs enough free RAM for the chosen model; see
+# docs/architecture.md for model/hardware sizing guidance).
+LLM_PROVIDER="anthropic"
+
+# Only used when LLM_PROVIDER="anthropic".
 ANTHROPIC_API_KEY="change-me"
 ANTHROPIC_MODEL="claude-haiku-4-5-20251001"
+
+# Only used when LLM_PROVIDER="ollama". Must support tool calling
+# (llama3.2/qwen2.5 do). "llama3.2:3b" is the recommended default on modest
+# hardware (~3GB RAM once loaded) — see docs/architecture.md before picking
+# a bigger one.
+OLLAMA_MODEL="llama3.2:3b"
 
 # Delphix DCT credentials. dxi-mcp-server (https://github.com/delphix/dxi-mcp-server,
 # installed as a project dependency and spawned directly as a stdio

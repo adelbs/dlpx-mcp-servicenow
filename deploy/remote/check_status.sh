@@ -3,8 +3,10 @@
 # ./orchestrator.sh ("View status"). Read-only — changes nothing.
 set -uo pipefail
 
+ETC_ENV="/etc/dlpx-servicenow-orchestrator/orchestrator.env"
+
 echo "=== Services ==="
-for svc in dlpx-servicenow-orchestrator nginx; do
+for svc in dlpx-servicenow-orchestrator nginx ollama; do
     # `systemctl is-active`/`is-enabled` always print a state to stdout
     # (active, inactive, failed, disabled, ...) even when they exit non-zero
     # (e.g. a stopped service returns exit != 0, which isn't a command
@@ -39,6 +41,24 @@ if [ -x /opt/dlpx-servicenow-orchestrator/.venv/bin/dct-mcp-server ]; then
     echo "Installed: /opt/dlpx-servicenow-orchestrator/.venv/bin/dct-mcp-server"
 else
     echo "MISSING — run 'uv sync' (Install or Update) to install it as a project dependency."
+fi
+
+echo
+echo "=== LLM provider ==="
+if [ -r "$ETC_ENV" ]; then
+    provider=$(grep -m1 '^LLM_PROVIDER=' "$ETC_ENV" | cut -d= -f2-)
+    echo "Configured: ${provider:-anthropic}"
+    if [ "$provider" = "ollama" ]; then
+        model=$(grep -m1 '^OLLAMA_MODEL=' "$ETC_ENV" | cut -d= -f2-)
+        echo "Model: ${model:-unknown}"
+        if command -v ollama >/dev/null 2>&1 && ollama list 2>/dev/null | grep -qF "${model:-__none__}"; then
+            echo "Pulled: yes"
+        else
+            echo "Pulled: NO — run 'ollama pull ${model:-<model>}' or re-run the Install option."
+        fi
+    fi
+else
+    echo "Cannot read $ETC_ENV (run Install first)."
 fi
 
 echo
