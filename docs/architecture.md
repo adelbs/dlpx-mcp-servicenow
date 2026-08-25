@@ -47,6 +47,16 @@ deliberately updated. `app/config.py`'s `_default_dct_mcp_command()` locates the
 `sys.executable`'s sibling directory rather than `$PATH`, since the systemd unit invokes uvicorn by absolute path
 and never "activates" the virtualenv.
 
+**`uv.lock` must actually reach the server for that guarantee to hold**: `deploy/lib/action_install.sh` and
+`action_update.sh` upload it alongside `pyproject.toml`, and `configure_and_start.sh` runs `uv sync --frozen`
+(install exactly what's pinned, never re-resolve) rather than plain `uv sync`. An earlier version of this project
+uploaded `pyproject.toml` without `uv.lock` and ran plain `uv sync` — which re-resolved the whole dependency graph
+fresh on the server, independently of whatever was tested locally. That surfaced as a real failure on a fresh
+Ubuntu install: the server resolved a combination where `dct-mcp-server`'s `from mcp.server.fastmcp import FastMCP`
+raised `ModuleNotFoundError` (an `mcp` version without that submodule), which crashed `mcp_client.start()` at
+FastAPI startup, which crashed the whole app, which is why Nginx returned 502 on every request — the backend was
+simply never up. Shipping the tested `uv.lock` and using `--frozen` closes that gap.
+
 ## Decision: no server-side git clone for this project's own code
 
 This project's own application code is **uploaded via `scp`** from the developer's working tree on every
@@ -69,6 +79,14 @@ in front of the host, if any, is outside this project's control and must allow t
 lets `certbot --nginx` reinsert the SSL block, reusing/renewing the certificate already under
 `/etc/letsencrypt/live/$DOMAIN` rather than issuing a new one every time. Re-running "Install" is safe at any
 point, including after a domain change.
+
+**Proxy timeouts must exceed the app's own long-running request**: `/servicenow-webhook` holds the HTTP connection
+open for the LLM extraction call *and* the entire Delphix job (`poll_job()` in `app/delphix_client.py` blocks until
+the job reaches a terminal state, up to `JOB_POLL_TIMEOUT_SECONDS` — 900s by default). Nginx's stock 60s
+`proxy_read_timeout` would 504 well before either finishes — confirmed live: a single `llama3.2:3b` extraction call
+on CPU-only hardware took ~55s on its own. The vhost template sets `proxy_connect_timeout 10s` (fail fast if the
+app itself is down) and `proxy_send_timeout`/`proxy_read_timeout 970s` (comfortably above the default job-poll
+timeout). If `JOB_POLL_TIMEOUT_SECONDS` is ever tuned higher, bump these too.
 
 ## Decision: support both CentOS/RHEL and Ubuntu/Debian
 

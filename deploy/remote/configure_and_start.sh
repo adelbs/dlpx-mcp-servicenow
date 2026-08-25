@@ -12,6 +12,7 @@
 #                         DCT_BASE_URL, DCT_API_KEY, SERVICENOW_*)
 #   - app/              (application source code)
 #   - pyproject.toml
+#   - uv.lock
 #   - templates/        (systemd unit + Nginx vhost templates)
 #   - setup_nginx.sh
 set -euo pipefail
@@ -58,17 +59,20 @@ export PATH="/usr/local/bin:$PATH"
 
 log "Installing application code into $APP_DIR..."
 mkdir -p "$SERVICE_HOME"
-rm -rf "${APP_DIR:?}" "$SERVICE_HOME/pyproject.toml" "$SERVICE_HOME/README.md"
+rm -rf "${APP_DIR:?}" "$SERVICE_HOME/pyproject.toml" "$SERVICE_HOME/uv.lock" "$SERVICE_HOME/README.md"
 mkdir -p "$APP_DIR"
 cp -r "$STAGING_DIR/app/." "$APP_DIR/"
 cp "$STAGING_DIR/pyproject.toml" "$SERVICE_HOME/pyproject.toml"
+cp "$STAGING_DIR/uv.lock" "$SERVICE_HOME/uv.lock"
 # pyproject.toml declares readme = "README.md" — hatchling needs it alongside
 # to build the package (even for `uv sync`'s editable install).
 cp "$STAGING_DIR/README.md" "$SERVICE_HOME/README.md"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$SERVICE_HOME"
 
-log "Running 'uv sync'..."
-sudo -u "$SERVICE_USER" -H bash -c "cd '$SERVICE_HOME' && /usr/local/bin/uv sync"
+# --frozen: install exactly what uv.lock pins, without re-resolving — the
+# whole point of shipping the lock file (see the note above).
+log "Running 'uv sync --frozen'..."
+sudo -u "$SERVICE_USER" -H bash -c "cd '$SERVICE_HOME' && /usr/local/bin/uv sync --frozen"
 
 if [ "$LLM_PROVIDER" = "ollama" ]; then
     log "LLM_PROVIDER=ollama — pulling $OLLAMA_MODEL (this can take a while on first run)..."

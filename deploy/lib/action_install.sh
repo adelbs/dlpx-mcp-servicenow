@@ -17,6 +17,12 @@ action_install() {
     log_info "Uploading app/, remote scripts, templates and project metadata..."
     upload_dir "$REPO_ROOT/app" "/tmp/dlpx-svcnow-orch-deploy"
     upload_file "$REPO_ROOT/pyproject.toml" "/tmp/dlpx-svcnow-orch-deploy/pyproject.toml"
+    # uv.lock pins the exact resolved versions (including dct-mcp-server's
+    # git commit) tested against this codebase — configure_and_start.sh runs
+    # `uv sync --frozen` with it, instead of letting the server re-resolve
+    # the whole dependency graph fresh (which can legitimately land on
+    # different, untested versions — see docs/architecture.md).
+    upload_file "$REPO_ROOT/uv.lock" "/tmp/dlpx-svcnow-orch-deploy/uv.lock"
     # pyproject.toml declares readme = "README.md" — hatchling refuses to
     # build the package (even for `uv sync`'s editable install) without it.
     upload_file "$REPO_ROOT/README.md" "/tmp/dlpx-svcnow-orch-deploy/README.md"

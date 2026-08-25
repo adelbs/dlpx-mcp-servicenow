@@ -21,6 +21,8 @@ source "$SCRIPT_DIR/deploy/lib/action_start_stop.sh"
 source "$SCRIPT_DIR/deploy/lib/action_update.sh"
 # shellcheck source=deploy/lib/action_uninstall.sh
 source "$SCRIPT_DIR/deploy/lib/action_uninstall.sh"
+# shellcheck source=deploy/lib/action_test_webhook.sh
+source "$SCRIPT_DIR/deploy/lib/action_test_webhook.sh"
 
 print_menu() {
     echo
@@ -33,6 +35,8 @@ print_menu() {
     echo "4) Stop service"
     echo "5) Update orchestrator (re-upload + restart)"
     echo "6) Uninstall (remove everything from the server)"
+    echo "7) Send a test webhook — provision (emulates Incident -> Prioritized)"
+    echo "8) Send a test webhook — teardown (emulates Incident -> Resolved/Closed)"
     echo "0) Exit"
     echo
 }
@@ -45,13 +49,15 @@ run_choice() {
         4) action_stop ;;
         5) action_update ;;
         6) action_uninstall ;;
+        7) action_test_webhook_provision ;;
+        8) action_test_webhook_teardown ;;
         0) exit 0 ;;
         *) log_warn "Invalid option." ;;
     esac
 }
 
 if [ "$#" -ge 1 ]; then
-    # Optional non-interactive use: ./orchestrator.sh <1-6>
+    # Optional non-interactive use: ./orchestrator.sh <1-8>
     run_choice "$1"
     exit 0
 fi

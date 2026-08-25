@@ -45,6 +45,8 @@ This opens a menu:
 4) Stop service
 5) Update orchestrator (re-upload + restart)
 6) Uninstall (remove everything from the server)
+7) Send a test webhook — provision (emulates Incident -> Prioritized)
+8) Send a test webhook — teardown (emulates Incident -> Resolved/Closed)
 0) Exit
 ```
 
@@ -57,6 +59,17 @@ code (which pulls in `dxi-mcp-server` as a dependency), configures systemd, star
 project's own Nginx vhost and TLS certificate for `DOMAIN`.
 
 At the end, it prints the URL to set as the `delphix.orchestrator_webhook_url` system property in ServiceNow.
+
+**Before pointing ServiceNow at that URL**, options **7** and **8** let you validate the whole pipeline against the
+real deployed server first: they POST the exact same JSON shape ServiceNow's Business Rules send (see
+`docs/servicenow_runbook_rebuild_from_scratch.md`) straight to `https://$DOMAIN/servicenow-webhook` — no SSH, no
+ServiceNow instance needed. They prompt for the incident's `short_description`/`description` as free text — exactly
+what an analyst would type — so you're testing the LLM's actual interpretation of that text (which app, which
+timestamp), not a canned value. This really provisions/deletes a VDB in Delphix (not a dry run); use the *same*
+incident number for both calls so teardown finds the VDB by its `incident:<number>` tag. The default `sys_id` is
+fake, so the final ServiceNow Table API `PATCH` will 404 — expected, since the goal is to validate the LLM +
+Delphix steps before ServiceNow is even wired up; pass a real incident's `sys_id` if you want that last step
+validated too. Follow along with `sudo journalctl -u dlpx-servicenow-orchestrator -f` on the server.
 
 You can also call an option directly without the interactive menu: `./orchestrator.sh 2` (view status).
 

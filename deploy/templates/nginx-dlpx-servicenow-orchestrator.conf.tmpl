@@ -15,6 +15,19 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The app holds this request open for the LLM extraction call plus
+        # the ENTIRE Delphix provision/teardown job — app/delphix_client.py's
+        # poll_job() only returns once the job reaches a terminal state, up
+        # to JOB_POLL_TIMEOUT_SECONDS (900s by default; see app/config.py).
+        # Nginx's stock 60s proxy_read_timeout would 504 well before that —
+        # and before a slow local LLM call finishes too (Ollama on CPU-only
+        # hardware can take well over a minute — see docs/architecture.md).
+        # Keep this comfortably above JOB_POLL_TIMEOUT_SECONDS if that's ever
+        # tuned higher in .env/orchestrator.env.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 970s;
+        proxy_read_timeout 970s;
     }
 
     location /health {
